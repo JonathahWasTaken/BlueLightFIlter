@@ -1,0 +1,15 @@
+#!/sbin/sh
+# update-binary — ponto de entrada padrão do Magisk para módulos
+# Este arquivo delega para o customize.sh via util_functions
+
+SKIPUNZIP=1
+
+# Extrair arquivos do módulo
+unzip -o "$ZIPFILE" 'system/*' -d "$MODPATH" >&2
+unzip -o "$ZIPFILE" 'service.sh' -d "$MODPATH" >&2
+unzip -o "$ZIPFILE" 'config.conf' -d "$MODPATH" >&2
+unzip -o "$ZIPFILE" 'module.prop' -d "$MODPATH" >&2
+unzip -o "$ZIPFILE" 'customize.sh' -d "$MODPATH" >&2
+
+# Executar customização
+. "$MODPATH/customize.sh"
