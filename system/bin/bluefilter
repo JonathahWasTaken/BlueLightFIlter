@@ -1,0 +1,153 @@
+#!/system/bin/sh
+# =============================================================
+# BlueFilter - System-wide blue light filter via SurfaceFlinger
+# Managed exclusively via the WebUI. Do not edit config manually.
+# =============================================================
+
+export PATH="/system/bin:/system/xbin:$PATH"
+
+MODDIR="/data/adb/modules/bluelightfilter"
+CONFIG_FILE="$MODDIR/config.conf"
+STATE_FILE="$MODDIR/enabled"
+
+# ------ Verify SurfaceFlinger is accessible ------
+if [ ! -f "/system/bin/service" ]; then
+    echo "Error: /system/bin/service not found." >&2
+    exit 1
+fi
+
+# ------ Apply a 4x4 color transform matrix via SurfaceFlinger ------
+# Transaction code 1015 sets a per-display color matrix at the compositor
+# level. Covers the entire screen — status bar, navigation bar, all apps.
+# Matrix (column-major):
+#   R  0  0  0
+#   0  G  0  0
+#   0  0  B  0
+#   0  0  0  1
+apply_filter() {
+    service call SurfaceFlinger 1015 i32 1 \
+        f "$1" f 0 f 0 f 0 \
+        f 0 f "$2" f 0 f 0 \
+        f 0 f 0 f "$3" f 0 \
+        f 0 f 0 f 0 f 1 \
+        > /dev/null 2>&1
+}
+
+# ------ Reset to identity matrix (no filter) ------
+remove_filter() {
+    service call SurfaceFlinger 1015 i32 1 \
+        f 1 f 0 f 0 f 0 \
+        f 0 f 1 f 0 f 0 \
+        f 0 f 0 f 1 f 0 \
+        f 0 f 0 f 0 f 1 \
+        > /dev/null 2>&1
+}
+
+# ------ Read saved RGB from config.conf ------
+# Prints "R G B" on stdout, returns 1 if nothing is saved.
+load_saved_rgb() {
+    local profile
+    profile=$(awk '
+        /^\[default\]/ { in_d=1; next }
+        /^\[/          { in_d=0 }
+        in_d && /^profile=/ { split($0,a,"="); print a[2]; exit }
+    ' "$CONFIG_FILE" 2>/dev/null)
+
+    [ -z "$profile" ] || [ "$profile" = "off" ] && return 1
+
+    local rgb
+    rgb=$(awk -v p="$profile" '
+        /^\[profiles\]/ { in_p=1; next }
+        /^\[/           { in_p=0 }
+        in_p && $0 ~ "^"p"=" { split($0,a,"="); print a[2]; exit }
+    ' "$CONFIG_FILE" 2>/dev/null)
+
+    [ -z "$rgb" ] && return 1
+    echo "$rgb"
+}
+
+# ------ Safety clamp: Red must be >= 0.10 ------
+# Prevents the screen from going completely black.
+clamp_red() {
+    awk -v r="$1" 'BEGIN {
+        r = r + 0
+        if (r < 0.10) r = 0.10
+        printf "%.2f", r
+    }'
+}
+
+# =============================================================
+# Commands — called by service.sh and the WebUI shell bridge
+# =============================================================
+case "$1" in
+
+    start)
+        rgb=$(load_saved_rgb)
+        if [ $? -eq 0 ] && [ -n "$rgb" ]; then
+            r=$(echo "$rgb" | awk '{print $1}')
+            g=$(echo "$rgb" | awk '{print $2}')
+            b=$(echo "$rgb" | awk '{print $3}')
+            r=$(clamp_red "$r")
+            apply_filter "$r" "$g" "$b"
+        else
+            # No saved color — apply neutral (no filter effect)
+            apply_filter "1.00" "1.00" "1.00"
+        fi
+        touch "$STATE_FILE"
+        echo "started"
+        ;;
+
+    stop)
+        remove_filter
+        rm -f "$STATE_FILE"
+        echo "stopped"
+        ;;
+
+    status)
+        [ -f "$STATE_FILE" ] && echo "running" || echo "stopped"
+        ;;
+
+    reset)
+        remove_filter
+        rm -f "$STATE_FILE"
+        echo "reset"
+        ;;
+
+    diag)
+        echo "=== BlueFilter Diagnostics ==="
+        echo ""
+        echo "[1] /system/bin/service:"
+        ls -la /system/bin/service 2>/dev/null || echo "    NOT FOUND"
+        echo ""
+        echo "[2] SurfaceFlinger ping:"
+        /system/bin/service call SurfaceFlinger 1013 > /dev/null 2>&1 \
+            && echo "    OK" || echo "    FAILED"
+        echo ""
+        echo "[3] Config file:"
+        ls -la "$CONFIG_FILE" 2>/dev/null || echo "    NOT FOUND"
+        echo ""
+        echo "[4] Filter state:"
+        [ -f "$STATE_FILE" ] \
+            && echo "    ENABLED" || echo "    DISABLED"
+        echo ""
+        echo "[5] Auto-boot:"
+        [ -f "$MODDIR/autoboot" ] \
+            && echo "    ON" || echo "    OFF"
+        echo ""
+        echo "[6] Saved RGB:"
+        rgb=$(load_saved_rgb) \
+            && echo "    $rgb" || echo "    none"
+        echo ""
+        echo "[7] Red test (3 seconds)..."
+        apply_filter 1.0 0.25 0.10
+        sleep 3
+        remove_filter
+        echo "    Done. Did the screen turn red?"
+        echo ""
+        echo "=== End ==="
+        ;;
+
+    *)
+        echo "Usage: bluefilter {start|stop|status|reset|diag}"
+        ;;
+esac
