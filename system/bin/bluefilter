@@ -113,6 +113,42 @@ case "$1" in
         echo "reset"
         ;;
 
+    daemon-start)
+        PIDFILE="$MODDIR/daemon.pid"
+        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+            echo "daemon already running (PID $(cat "$PIDFILE"))"
+        else
+            rm -f "$PIDFILE"
+            nohup /system/bin/bluefilter-daemon > /dev/null 2>&1 &
+            sleep 1
+            if [ -f "$PIDFILE" ]; then
+                echo "daemon started (PID $(cat "$PIDFILE"))"
+            else
+                echo "daemon failed to start"
+            fi
+        fi
+        ;;
+
+    daemon-stop)
+        PIDFILE="$MODDIR/daemon.pid"
+        if [ -f "$PIDFILE" ]; then
+            kill "$(cat "$PIDFILE")" 2>/dev/null
+            rm -f "$PIDFILE"
+            echo "daemon stopped"
+        else
+            echo "daemon not running"
+        fi
+        ;;
+
+    daemon-status)
+        PIDFILE="$MODDIR/daemon.pid"
+        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+            echo "running (PID $(cat "$PIDFILE"))"
+        else
+            echo "stopped"
+        fi
+        ;;
+
     diag)
         echo "=== BlueFilter Diagnostics ==="
         echo ""
@@ -138,7 +174,29 @@ case "$1" in
         rgb=$(load_saved_rgb) \
             && echo "    $rgb" || echo "    none"
         echo ""
-        echo "[7] Red test (3 seconds)..."
+        echo "[7] Daemon:"
+        PIDFILE="$MODDIR/daemon.pid"
+        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+            echo "    RUNNING (PID $(cat "$PIDFILE"))"
+        else
+            echo "    STOPPED"
+        fi
+        echo ""
+        echo "[8] Schedule:"
+        sched=$(awk '/^\[schedule\]/{s=1;next}/^\[/{s=0}s&&/^enabled=/{split($0,a,"=");print a[2]}' "$CONFIG_FILE" 2>/dev/null)
+        if [ "$sched" = "1" ]; then
+            sunset=$(awk '/^\[schedule\]/{s=1;next}/^\[/{s=0}s&&/^sunset=/{split($0,a,"=");print a[2]}' "$CONFIG_FILE" 2>/dev/null)
+            sunrise=$(awk '/^\[schedule\]/{s=1;next}/^\[/{s=0}s&&/^sunrise=/{split($0,a,"=");print a[2]}' "$CONFIG_FILE" 2>/dev/null)
+            echo "    ON (sunset=$sunset, sunrise=$sunrise)"
+        else
+            echo "    OFF"
+        fi
+        echo ""
+        echo "[9] Notification:"
+        notif=$(awk '/^\[notification\]/{n=1;next}/^\[/{n=0}n&&/^enabled=/{split($0,a,"=");print a[2]}' "$CONFIG_FILE" 2>/dev/null)
+        [ "$notif" = "1" ] && echo "    ON" || echo "    OFF"
+        echo ""
+        echo "[10] Red test (3 seconds)..."
         apply_filter 1.0 0.25 0.10
         sleep 3
         remove_filter
@@ -148,6 +206,6 @@ case "$1" in
         ;;
 
     *)
-        echo "Usage: bluefilter {start|stop|status|reset|diag}"
+        echo "Usage: bluefilter {start|stop|status|reset|diag|daemon-start|daemon-stop|daemon-status}"
         ;;
 esac

@@ -1,0 +1,158 @@
+#!/system/bin/sh
+# =============================================================
+# BlueFilter - Background daemon
+# Handles sunset/sunrise scheduling and persistent notification.
+# Started by service.sh at boot; managed via bluefilter commands.
+# =============================================================
+
+export PATH="/system/bin:/system/xbin:$PATH"
+
+MODDIR="/data/adb/modules/bluelightfilter"
+CONFIG_FILE="$MODDIR/config.conf"
+STATE_FILE="$MODDIR/enabled"
+PIDFILE="$MODDIR/daemon.pid"
+AUTO_SENTINEL="$MODDIR/.auto_enabled"
+NOTIF_TAG="blf_status"
+NOTIF_ID="bluelightfilter"
+
+# Interval between checks (seconds)
+INTERVAL=60
+
+# ------ Write PID file ------
+echo $$ > "$PIDFILE"
+
+# ------ Cleanup on exit ------
+cleanup() {
+    cmd notification cancel "$NOTIF_TAG" 2>/dev/null
+    rm -f "$PIDFILE"
+    exit 0
+}
+trap cleanup SIGTERM SIGHUP SIGINT
+
+# ------ Read a value from a specific config section ------
+# Usage: read_config <section> <key>
+read_config() {
+    awk -v section="$1" -v key="$2" '
+        $0 ~ "^\\[" section "\\]" { in_s=1; next }
+        /^\[/                      { in_s=0 }
+        in_s && $0 ~ "^" key "=" {
+            split($0, a, "=")
+            print a[2]
+            exit
+        }
+    ' "$CONFIG_FILE" 2>/dev/null
+}
+
+# ------ Check if current time is within the night window ------
+# Args: current_hhmm sunset_hhmm sunrise_hhmm
+# Returns 0 (true) if in night window, 1 otherwise
+is_night_window() {
+    local now="$1" sunset="$2" sunrise="$3"
+    if [ "$sunset" -gt "$sunrise" ]; then
+        # Normal case: wraps past midnight (e.g., sunset 2100, sunrise 0600)
+        [ "$now" -ge "$sunset" ] || [ "$now" -lt "$sunrise" ]
+    else
+        # Unusual: same-day window (e.g., sunset 0600, sunrise 2100)
+        [ "$now" -ge "$sunset" ] && [ "$now" -lt "$sunrise" ]
+    fi
+}
+
+# ------ Convert HH:MM to HHMM integer ------
+time_to_int() {
+    echo "$1" | awk -F: '{ printf "%d", $1 * 100 + $2 }'
+}
+
+# ------ Determine WebUI intent for notification tap ------
+resolve_intent() {
+    if pm path io.github.a13e300.ksuwebui > /dev/null 2>&1; then
+        echo "intent:#Intent;component=io.github.a13e300.ksuwebui/.WebUIActivity;S.id=bluelightfilter;end"
+    elif pm path com.dergoogler.mmrl > /dev/null 2>&1; then
+        echo "intent:#Intent;component=com.dergoogler.mmrl/.ui.activity.webui.WebUIActivity;S.MOD_ID=bluelightfilter;end"
+    else
+        echo ""
+    fi
+}
+
+# ------ Post or update persistent notification ------
+# Args: none (reads STATE_FILE)
+last_notif_state=""
+post_notification() {
+    local is_on="0"
+    [ -f "$STATE_FILE" ] && is_on="1"
+
+    # Skip if state hasn't changed
+    [ "$is_on" = "$last_notif_state" ] && return
+    last_notif_state="$is_on"
+
+    local title text
+    if [ "$is_on" = "1" ]; then
+        title="Blue Light Filter: Active"
+        text="Filter is on. Tap to open controls."
+    else
+        title="Blue Light Filter: Inactive"
+        text="Filter is off. Tap to open controls."
+    fi
+
+    local intent
+    intent=$(resolve_intent)
+
+    if [ -n "$intent" ]; then
+        cmd notification post --ongoing -t "$title" -I "$intent" "$NOTIF_TAG" "$text" 2>/dev/null
+    else
+        cmd notification post --ongoing -t "$title" "$NOTIF_TAG" "$text" 2>/dev/null
+    fi
+}
+
+# ------ Remove notification ------
+remove_notification() {
+    cmd notification cancel "$NOTIF_TAG" 2>/dev/null
+    last_notif_state=""
+}
+
+# =============================================================
+# Main loop
+# =============================================================
+while true; do
+    # --- Read schedule config ---
+    sched_enabled=$(read_config "schedule" "enabled")
+    notif_enabled=$(read_config "notification" "enabled")
+
+    # --- Schedule logic ---
+    if [ "$sched_enabled" = "1" ]; then
+        sunset_raw=$(read_config "schedule" "sunset")
+        sunrise_raw=$(read_config "schedule" "sunrise")
+
+        if [ -n "$sunset_raw" ] && [ -n "$sunrise_raw" ]; then
+            now_hhmm=$(date +%H%M | sed 's/^0*//')
+            [ -z "$now_hhmm" ] && now_hhmm=0
+            sunset_hhmm=$(time_to_int "$sunset_raw")
+            sunrise_hhmm=$(time_to_int "$sunrise_raw")
+
+            if is_night_window "$now_hhmm" "$sunset_hhmm" "$sunrise_hhmm"; then
+                # Should be ON
+                if [ ! -f "$STATE_FILE" ]; then
+                    /system/bin/bluefilter start > /dev/null 2>&1
+                    touch "$AUTO_SENTINEL"
+                fi
+            else
+                # Should be OFF — but only if we auto-enabled it
+                if [ -f "$STATE_FILE" ] && [ -f "$AUTO_SENTINEL" ]; then
+                    /system/bin/bluefilter stop > /dev/null 2>&1
+                    rm -f "$AUTO_SENTINEL"
+                fi
+            fi
+        fi
+    fi
+
+    # --- Notification logic ---
+    if [ "$notif_enabled" = "1" ]; then
+        post_notification
+    else
+        # If notification was showing but user disabled it, remove it
+        if [ -n "$last_notif_state" ]; then
+            remove_notification
+        fi
+    fi
+
+    sleep "$INTERVAL"
+done

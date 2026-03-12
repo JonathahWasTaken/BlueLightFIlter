@@ -22,3 +22,15 @@ sleep 5
 if [ -f "$AUTOBOOT_FILE" ]; then
     /system/bin/bluefilter start
 fi
+
+# ------ Start background daemon ------
+# The daemon handles sunset/sunrise scheduling and persistent
+# notification. It runs unconditionally so that enabling these
+# features from the WebUI takes effect without a reboot.
+PIDFILE="$MODDIR/daemon.pid"
+if [ -f "$PIDFILE" ]; then
+    old_pid=$(cat "$PIDFILE")
+    kill -0 "$old_pid" 2>/dev/null && kill "$old_pid" 2>/dev/null
+    rm -f "$PIDFILE"
+fi
+nohup /system/bin/bluefilter-daemon > /dev/null 2>&1 &

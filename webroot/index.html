@@ -267,6 +267,64 @@
     </button>
   </div>
 
+  <!-- Automation -->
+  <div class="card">
+    <div class="card-title">Automation</div>
+
+    <!-- Schedule toggle -->
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <div>
+        <div style="font-size:0.9rem;font-weight:600;">Sunset / Sunrise Schedule</div>
+        <div style="font-size:0.72rem;color:var(--text2);margin-top:2px;">Auto-enable at sunset, disable at sunrise</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="sched-switch" onchange="toggleSchedule(this.checked)">
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <!-- Time inputs (visible when schedule enabled) -->
+    <div id="sched-times" style="display:none;">
+      <div style="display:flex;gap:12px;margin-bottom:14px;">
+        <div style="flex:1;">
+          <label style="font-size:0.78rem;color:var(--text2);display:block;margin-bottom:4px;">Sunset (filter ON)</label>
+          <input type="time" id="sched-sunset" value="21:00"
+                 style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);
+                        background:var(--bg3);color:var(--text);font-size:0.95rem;">
+        </div>
+        <div style="flex:1;">
+          <label style="font-size:0.78rem;color:var(--text2);display:block;margin-bottom:4px;">Sunrise (filter OFF)</label>
+          <input type="time" id="sched-sunrise" value="06:00"
+                 style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);
+                        background:var(--bg3);color:var(--text);font-size:0.95rem;">
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="saveSchedule()">Save Schedule</button>
+    </div>
+
+    <!-- Notification toggle -->
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;
+                padding-top:14px;border-top:1px solid var(--border);">
+      <div>
+        <div style="font-size:0.9rem;font-weight:600;">Persistent Notification</div>
+        <div style="font-size:0.72rem;color:var(--text2);margin-top:2px;">Show filter status in notification tray</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="notif-switch" onchange="toggleNotification(this.checked)">
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <!-- Daemon status indicator -->
+    <div id="daemon-warn" style="display:none;margin-top:14px;padding:10px 12px;
+                border-radius:8px;background:#2a2000;border:1px solid #554400;
+                font-size:0.78rem;color:#ffcc44;">
+      Daemon is not running. Schedule and notification require a reboot or tap below to start it.
+      <button class="btn btn-warning" style="margin-top:8px;padding:8px 12px;font-size:0.78rem;"
+              onclick="startDaemon()">Start Daemon</button>
+    </div>
+  </div>
+
   <!-- Info -->
   <div class="card">
     <div class="card-title">Info</div>
@@ -281,6 +339,14 @@
     <div class="info-row">
       <span class="lbl">Auto-start on boot</span>
       <span class="val" id="info-boot">—</span>
+    </div>
+    <div class="info-row">
+      <span class="lbl">Daemon</span>
+      <span class="val" id="info-daemon">—</span>
+    </div>
+    <div class="info-row">
+      <span class="lbl">Schedule</span>
+      <span class="val" id="info-schedule">—</span>
     </div>
   </div>
 
@@ -539,6 +605,34 @@ async function syncInfo() {
   document.getElementById('btn-boot').textContent   =
     `⚙ Auto-start on boot: ${isBoot ? 'ON' : 'OFF'}`;
 
+  // --- Automation state ---
+  const [schedEnabled, schedSunset, schedSunrise, notifEnabled, daemonStatus] =
+    await Promise.all([
+      sh(readConfigCmd('schedule', 'enabled')),
+      sh(readConfigCmd('schedule', 'sunset')),
+      sh(readConfigCmd('schedule', 'sunrise')),
+      sh(readConfigCmd('notification', 'enabled')),
+      sh('/system/bin/bluefilter daemon-status'),
+    ]);
+
+  const isSched = schedEnabled === '1';
+  const isNotif = notifEnabled === '1';
+  const isDaemonOn = daemonStatus.startsWith('running');
+
+  document.getElementById('sched-switch').checked = isSched;
+  document.getElementById('sched-times').style.display = isSched ? '' : 'none';
+  if (schedSunset)  document.getElementById('sched-sunset').value  = schedSunset;
+  if (schedSunrise) document.getElementById('sched-sunrise').value = schedSunrise;
+  document.getElementById('notif-switch').checked = isNotif;
+
+  document.getElementById('info-daemon').textContent   = isDaemonOn ? 'Running' : 'Stopped';
+  document.getElementById('info-schedule').textContent  =
+    isSched ? `ON (${schedSunset || '?'} – ${schedSunrise || '?'})` : 'OFF';
+
+  // Show daemon warning if schedule or notification is on but daemon is not running
+  document.getElementById('daemon-warn').style.display =
+    (isSched || isNotif) && !isDaemonOn ? '' : 'none';
+
   const rgb = await readSavedRGB();
   if (rgb) {
     // Clamp Red defensively (e.g. if config was corrupted externally)
@@ -564,6 +658,61 @@ async function syncInfo() {
   } else {
     document.getElementById('info-color').textContent = 'Not saved yet';
   }
+}
+
+// =============================================================
+// Schedule — toggle, save, and config helpers
+// =============================================================
+
+// Section-aware config reader: returns value for key in [section]
+function readConfigCmd(section, key) {
+  return `awk '/^\\[${section}\\]/{s=1;next}/^\\[/{s=0}` +
+         `s&&/^${key}=/{split($0,a,"=");print a[2];exit}' ${CONFIG} 2>/dev/null`;
+}
+
+// Section-aware config writer: sets key=value within [section]
+function writeConfigCmd(section, key, value) {
+  return `awk '/^\\[${section}\\]/{s=1}/^\\[/{if(s&&!/^\\[${section}\\]/)s=0}` +
+         `s&&/^${key}=/{$0="${key}=${value}"}1' ${CONFIG} > ${CONFIG}.tmp ` +
+         `&& mv ${CONFIG}.tmp ${CONFIG}`;
+}
+
+async function toggleSchedule(on) {
+  await sh(writeConfigCmd('schedule', 'enabled', on ? '1' : '0'));
+  document.getElementById('sched-times').style.display = on ? '' : 'none';
+  toast(on ? 'Schedule enabled' : 'Schedule disabled');
+  if (on) await ensureDaemon();
+  syncInfo();
+}
+
+async function saveSchedule() {
+  const sunset  = document.getElementById('sched-sunset').value;   // "HH:MM"
+  const sunrise = document.getElementById('sched-sunrise').value;
+  if (!sunset || !sunrise) { toast('Please set both times'); return; }
+  await sh(writeConfigCmd('schedule', 'sunset', sunset));
+  await sh(writeConfigCmd('schedule', 'sunrise', sunrise));
+  toast('Schedule saved');
+  syncInfo();
+}
+
+async function toggleNotification(on) {
+  await sh(writeConfigCmd('notification', 'enabled', on ? '1' : '0'));
+  toast(on ? 'Notification enabled' : 'Notification disabled');
+  if (on) await ensureDaemon();
+  syncInfo();
+}
+
+async function ensureDaemon() {
+  const status = await sh('/system/bin/bluefilter daemon-status');
+  if (!status.startsWith('running')) {
+    await sh('/system/bin/bluefilter daemon-start');
+  }
+}
+
+async function startDaemon() {
+  await sh('/system/bin/bluefilter daemon-start');
+  toast('Daemon started');
+  syncInfo();
 }
 
 // =============================================================

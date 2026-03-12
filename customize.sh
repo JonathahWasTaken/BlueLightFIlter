@@ -34,6 +34,7 @@ fi
 # ------ Set binary permissions ------
 ui_print "  Setting binary permissions..."
 set_perm "$MODPATH/system/bin/bluefilter" root root 0755
+set_perm "$MODPATH/system/bin/bluefilter-daemon" root root 0755
 
 # ------ Install config ------
 # On a fresh install: copy the bundled default.
@@ -44,6 +45,20 @@ if [ ! -f "$CONFIG_DEST" ]; then
     ui_print "  Default config installed."
 else
     ui_print "  Existing config preserved."
+    # Migrate config: add [schedule] and [notification] sections if missing
+    if ! grep -q '^\[schedule\]' "$CONFIG_DEST" 2>/dev/null; then
+        cat >> "$CONFIG_DEST" << 'CONF'
+
+[schedule]
+enabled=0
+sunset=21:00
+sunrise=06:00
+
+[notification]
+enabled=0
+CONF
+        ui_print "  Config migrated: added schedule/notification sections."
+    fi
 fi
 
 # ------ First-install vs upgrade detection ------
