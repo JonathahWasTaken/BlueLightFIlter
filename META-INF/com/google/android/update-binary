@@ -1,15 +1,33 @@
 #!/sbin/sh
-# update-binary — ponto de entrada padrão do Magisk para módulos
-# Este arquivo delega para o customize.sh via util_functions
 
-SKIPUNZIP=1
+#################
+# Initialization
+#################
 
-# Extrair arquivos do módulo
-unzip -o "$ZIPFILE" 'system/*' -d "$MODPATH" >&2
-unzip -o "$ZIPFILE" 'service.sh' -d "$MODPATH" >&2
-unzip -o "$ZIPFILE" 'config.conf' -d "$MODPATH" >&2
-unzip -o "$ZIPFILE" 'module.prop' -d "$MODPATH" >&2
-unzip -o "$ZIPFILE" 'customize.sh' -d "$MODPATH" >&2
+umask 022
 
-# Executar customização
-. "$MODPATH/customize.sh"
+# echo before loading util_functions
+ui_print() { echo "$1"; }
+
+require_new_magisk() {
+  ui_print "*******************************"
+  ui_print " Please install Magisk v20.4+! "
+  ui_print "*******************************"
+  exit 1
+}
+
+#########################
+# Load util_functions.sh
+#########################
+
+OUTFD=$2
+ZIPFILE=$3
+
+mount /data 2>/dev/null
+
+[ -f /data/adb/magisk/util_functions.sh ] || require_new_magisk
+. /data/adb/magisk/util_functions.sh
+[ $MAGISK_VER_CODE -lt 20400 ] && require_new_magisk
+
+install_module
+exit 0

@@ -1,0 +1,371 @@
+#!/system/bin/sh
+# Shared, side-effect-light helpers for BlueLightFIlter.
+# This file is sourced by the CLI, daemon, and host-side tests.
+
+BLUEFILTER_SCHEMA=2
+BLUEFILTER_DEFAULT_PROFILE=red-dim
+BLUEFILTER_IDENTITY_MATRIX='1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1'
+
+valid_name() {
+    case ${1:-} in
+        ''|*[!A-Za-z0-9_-]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+is_decimal() {
+    value=${1:-}
+    case "$value" in
+        ''|*[!0-9.]*|*.*.*|.) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+validate_brightness() {
+    is_decimal "${1:-}" || return 1
+    awk -v value="$1" 'BEGIN { exit !(value >= 0.10 && value <= 1.00) }'
+}
+
+validate_time() {
+    value=${1:-}
+    case "$value" in
+        [0-1][0-9]:[0-5][0-9]|2[0-3]:[0-5][0-9]) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+time_to_int() {
+    validate_time "${1:-}" || return 1
+    hour=${1%:*}
+    minute=${1#*:}
+    hour=${hour#0}
+    minute=${minute#0}
+    [ -n "$hour" ] || hour=0
+    [ -n "$minute" ] || minute=0
+    printf '%d\n' $((hour * 100 + minute))
+}
+
+is_night_window() {
+    now=${1:-}
+    sunset=${2:-}
+    sunrise=${3:-}
+    case "$now$sunset$sunrise" in *[!0-9]*) return 1 ;; esac
+    [ "$sunset" -ne "$sunrise" ] || return 1
+    if [ "$sunset" -gt "$sunrise" ]; then
+        [ "$now" -ge "$sunset" ] || [ "$now" -lt "$sunrise" ]
+    else
+        [ "$now" -ge "$sunset" ] && [ "$now" -lt "$sunrise" ]
+    fi
+}
+
+profile_names() {
+    printf '%s\n' warm amber deep-red red red-dim red-extra-dim custom
+}
+
+profile_exists() {
+    case ${1:-} in
+        warm|amber|deep-red|red|red-dim|red-extra-dim|custom) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+profile_default_brightness() {
+    case ${1:-} in
+        red-dim) printf '0.55\n' ;;
+        red-extra-dim) printf '0.30\n' ;;
+        warm|amber|deep-red|red|custom) printf '1.00\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+profile_matrix() {
+    case ${1:-} in
+        warm)
+            printf '%s\n' '1 0 0 0 0 0.72 0 0 0 0 0.38 0 0 0 0 1'
+            ;;
+        amber)
+            printf '%s\n' '1 0 0 0 0 0.58 0 0 0 0 0.12 0 0 0 0 1'
+            ;;
+        deep-red)
+            printf '%s\n' '1 0 0 0 0 0.14 0 0 0 0 0.03 0 0 0 0 1'
+            ;;
+        red|red-dim|red-extra-dim)
+            # Column-major serialization of:
+            # R' = 0.2126R + 0.7152G + 0.0722B; G' = B' = 0.
+            printf '%s\n' '0.2126 0 0 0 0.7152 0 0 0 0.0722 0 0 0 0 0 0 1'
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+validate_matrix() {
+    matrix=${1:-}
+    awk -v matrix="$matrix" '
+        BEGIN {
+            count = split(matrix, value, /[[:space:]]+/)
+            if (count != 16) exit 1
+            for (i = 1; i <= 16; i++) {
+                if (value[i] !~ /^([0-9]+([.][0-9]+)?|[.][0-9]+)$/) exit 1
+                number[i] = value[i] + 0
+                if (number[i] < 0 || number[i] > 1.25) exit 1
+            }
+            if (number[4] != 0 || number[8] != 0 || number[12] != 0) exit 1
+            if (number[13] != 0 || number[14] != 0 || number[15] != 0) exit 1
+            if (number[16] != 1) exit 1
+            red = number[1] + number[5] + number[9]
+            green = number[2] + number[6] + number[10]
+            blue = number[3] + number[7] + number[11]
+            if (red > 1.25 || green > 1.25 || blue > 1.25) exit 1
+            if (red < 0.10 && green < 0.10 && blue < 0.10) exit 1
+            exit 0
+        }
+    '
+}
+
+scale_matrix() {
+    matrix=${1:-}
+    brightness=${2:-}
+    validate_matrix "$matrix" || return 1
+    validate_brightness "$brightness" || return 1
+    awk -v matrix="$matrix" -v brightness="$brightness" '
+        BEGIN {
+            split(matrix, value, /[[:space:]]+/)
+            for (i = 1; i <= 16; i++) {
+                if (i <= 11 && i != 4 && i != 8) {
+                    value[i] = value[i] * brightness
+                }
+                printf "%s%s", sprintf("%.6g", value[i]), (i == 16 ? ORS : OFS)
+            }
+        }
+    '
+}
+
+rgb_to_matrix() {
+    rgb=${1:-}
+    awk -v rgb="$rgb" '
+        BEGIN {
+            count = split(rgb, value, /[[:space:]]+/)
+            if (count != 3) exit 1
+            for (i = 1; i <= 3; i++) {
+                if (value[i] !~ /^([0-9]+([.][0-9]+)?|[.][0-9]+)$/) exit 1
+                if (value[i] < 0 || value[i] > 1) exit 1
+            }
+            print value[1],0,0,0,0,value[2],0,0,0,0,value[3],0,0,0,0,1
+        }
+    '
+}
+
+config_get() {
+    file=${1:-}
+    section=${2:-}
+    key=${3:-}
+    [ -f "$file" ] || return 1
+    valid_name "$section" || return 1
+    valid_name "$key" || return 1
+    awk -v section="$section" -v key="$key" '
+        $0 == "[" section "]" { active = 1; next }
+        /^\[/ { active = 0 }
+        active && index($0, key "=") == 1 {
+            sub("^[^=]*=", "")
+            sub("\r$", "")
+            print
+            found = 1
+            exit
+        }
+        END { if (!found) exit 1 }
+    ' "$file"
+}
+
+config_set() {
+    file=${1:-}
+    section=${2:-}
+    key=${3:-}
+    value=${4:-}
+    valid_name "$section" || return 1
+    valid_name "$key" || return 1
+    newline=$(printf '\nX')
+    newline=${newline%X}
+    case "$value" in *"$newline"*) return 1 ;; esac
+    directory=${file%/*}
+    [ "$directory" != "$file" ] || directory=.
+    [ -d "$directory" ] || mkdir -p "$directory" || return 1
+    [ -f "$file" ] || : > "$file" || return 1
+    temporary="$file.tmp.$$"
+    umask 077
+    awk -v section="$section" -v key="$key" -v value="$value" '
+        BEGIN { target = "[" section "]" }
+        $0 == target {
+            if (in_section && !wrote) print key "=" value
+            in_section = 1
+            saw_section = 1
+            print
+            next
+        }
+        /^\[/ {
+            if (in_section && !wrote) {
+                print key "=" value
+                wrote = 1
+            }
+            in_section = 0
+        }
+        in_section && index($0, key "=") == 1 {
+            if (!wrote) print key "=" value
+            wrote = 1
+            next
+        }
+        { print }
+        END {
+            if (!saw_section) {
+                print ""
+                print target
+                print key "=" value
+            } else if (in_section && !wrote) {
+                print key "=" value
+            }
+        }
+    ' "$file" > "$temporary" || {
+        rm -f "$temporary"
+        return 1
+    }
+    mv "$temporary" "$file"
+}
+
+migrate_config() {
+    file=${1:-}
+    [ -f "$file" ] || return 1
+    schema=$(config_get "$file" meta schema 2>/dev/null || printf '1')
+    [ "$schema" = "$BLUEFILTER_SCHEMA" ] && return 0
+
+    old_profile=$(config_get "$file" default profile 2>/dev/null || printf '%s' "$BLUEFILTER_DEFAULT_PROFILE")
+    custom_matrix=
+    if [ "$old_profile" = custom ]; then
+        old_rgb=$(config_get "$file" profiles custom 2>/dev/null || true)
+        custom_matrix=$(rgb_to_matrix "$old_rgb" 2>/dev/null || true)
+    fi
+    validate_matrix "$custom_matrix" || custom_matrix=$BLUEFILTER_IDENTITY_MATRIX
+    profile_exists "$old_profile" || old_profile=$BLUEFILTER_DEFAULT_PROFILE
+    brightness=$(profile_default_brightness "$old_profile")
+    schedule_enabled=$(config_get "$file" schedule enabled 2>/dev/null || true)
+    case "$schedule_enabled" in 0|1) ;; *) schedule_enabled=0 ;; esac
+    sunset=$(config_get "$file" schedule sunset 2>/dev/null || true)
+    validate_time "$sunset" || sunset=21:00
+    sunrise=$(config_get "$file" schedule sunrise 2>/dev/null || true)
+    validate_time "$sunrise" || sunrise=06:00
+    [ "$sunset" != "$sunrise" ] || { sunset=21:00; sunrise=06:00; }
+    notification_enabled=$(config_get "$file" notification enabled 2>/dev/null || true)
+    case "$notification_enabled" in 0|1) ;; *) notification_enabled=0 ;; esac
+    config_set "$file" meta schema "$BLUEFILTER_SCHEMA" || return 1
+    config_set "$file" default profile "$old_profile" || return 1
+    config_set "$file" default brightness "$brightness" || return 1
+    config_set "$file" custom matrix "$custom_matrix" || return 1
+    config_set "$file" schedule enabled "$schedule_enabled" || return 1
+    config_set "$file" schedule sunset "$sunset" || return 1
+    config_set "$file" schedule sunrise "$sunrise" || return 1
+    config_set "$file" notification enabled "$notification_enabled" || return 1
+}
+
+config_is_valid() {
+    file=${1:-}
+    [ "$(config_get "$file" meta schema 2>/dev/null)" = "$BLUEFILTER_SCHEMA" ] || return 1
+    profile=$(config_get "$file" default profile 2>/dev/null || true)
+    profile_exists "$profile" || return 1
+    brightness=$(config_get "$file" default brightness 2>/dev/null || true)
+    validate_brightness "$brightness" || return 1
+    matrix=$(config_get "$file" custom matrix 2>/dev/null || true)
+    validate_matrix "$matrix" || return 1
+    schedule_enabled=$(config_get "$file" schedule enabled 2>/dev/null || true)
+    case "$schedule_enabled" in 0|1) ;; *) return 1 ;; esac
+    sunset=$(config_get "$file" schedule sunset 2>/dev/null || true)
+    sunrise=$(config_get "$file" schedule sunrise 2>/dev/null || true)
+    validate_time "$sunset" && validate_time "$sunrise" || return 1
+    [ "$sunset" != "$sunrise" ] || return 1
+    notification_enabled=$(config_get "$file" notification enabled 2>/dev/null || true)
+    case "$notification_enabled" in 0|1) return 0 ;; *) return 1 ;; esac
+}
+
+configured_profile() {
+    file=${1:-}
+    profile=$(config_get "$file" default profile 2>/dev/null || true)
+    profile_exists "$profile" || profile=$BLUEFILTER_DEFAULT_PROFILE
+    printf '%s\n' "$profile"
+}
+
+configured_brightness() {
+    file=${1:-}
+    profile=${2:-$(configured_profile "$file")}
+    brightness=$(config_get "$file" default brightness 2>/dev/null || true)
+    validate_brightness "$brightness" || brightness=$(profile_default_brightness "$profile")
+    printf '%s\n' "$brightness"
+}
+
+configured_matrix() {
+    file=${1:-}
+    profile=${2:-$(configured_profile "$file")}
+    if [ "$profile" = custom ]; then
+        matrix=$(config_get "$file" custom matrix 2>/dev/null || true)
+        validate_matrix "$matrix" || return 1
+        printf '%s\n' "$matrix"
+    else
+        profile_matrix "$profile"
+    fi
+}
+
+state_get() {
+    file=${1:-}
+    key=${2:-}
+    [ -f "$file" ] || return 1
+    valid_name "$key" || return 1
+    awk -v key="$key" 'index($0, key "=") == 1 { sub("^[^=]*=", ""); print; found=1; exit } END { if (!found) exit 1 }' "$file"
+}
+
+write_state() {
+    file=$1
+    profile=$2
+    brightness=$3
+    source=$4
+    profile_exists "$profile" || return 1
+    validate_brightness "$brightness" || return 1
+    case "$source" in manual|schedule|boot) ;; *) return 1 ;; esac
+    temporary="$file.tmp.$$"
+    umask 077
+    {
+        printf 'profile=%s\n' "$profile"
+        printf 'brightness=%s\n' "$brightness"
+        printf 'source=%s\n' "$source"
+    } > "$temporary" || return 1
+    mv "$temporary" "$file"
+}
+
+acquire_lock() {
+    lock_dir=$1
+    attempts=${2:-30}
+    count=0
+    while [ "$count" -lt "$attempts" ]; do
+        if mkdir "$lock_dir" 2>/dev/null; then
+            printf '%s\n' "$$" > "$lock_dir/pid"
+            BLUEFILTER_HELD_LOCK=$lock_dir
+            return 0
+        fi
+        owner=$(cat "$lock_dir/pid" 2>/dev/null || true)
+        case "$owner" in
+            ''|*[!0-9]*) stale=1 ;;
+            *) kill -0 "$owner" 2>/dev/null && stale=0 || stale=1 ;;
+        esac
+        if [ "$stale" -eq 1 ]; then
+            rm -f "$lock_dir/pid" 2>/dev/null
+            rmdir "$lock_dir" 2>/dev/null
+            continue
+        fi
+        count=$((count + 1))
+        sleep 0.05
+    done
+    return 1
+}
+
+release_lock() {
+    lock_dir=${1:-${BLUEFILTER_HELD_LOCK:-}}
+    [ -n "$lock_dir" ] || return 0
+    rm -f "$lock_dir/pid" 2>/dev/null
+    rmdir "$lock_dir" 2>/dev/null
+    BLUEFILTER_HELD_LOCK=
+}

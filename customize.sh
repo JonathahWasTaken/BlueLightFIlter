@@ -1,79 +1,70 @@
 #!/system/bin/sh
-# =============================================================
-# BlueFilter - Installation script
-# Executed by Magisk / KernelSU during module flash
-# =============================================================
+# Installation and upgrade migration for Magisk/KernelSU module managers.
 
-MODDIR="/data/adb/modules/bluelightfilter"
-CONFIG_DEST="$MODDIR/config.conf"
+MODULE_ID=bluelightfilter
+LIVE_MODDIR=/data/adb/modules/$MODULE_ID
+CONFIG_DEST=$MODPATH/config.conf
 
 ui_print ""
 ui_print "============================================"
-ui_print "   Blue Light Filter"
-ui_print "   System-wide filter via SurfaceFlinger"
+ui_print "   BlueLightFIlter 2.0"
+ui_print "   SurfaceFlinger color transforms"
 ui_print "============================================"
 ui_print ""
 
-# ------ Android SDK check ------
-SDK=$(getprop ro.build.version.sdk)
-ui_print "  Android SDK : ${SDK:-unknown}"
-
+SDK=${API:-$(getprop ro.build.version.sdk 2>/dev/null)}
+ui_print "  Android API: ${SDK:-unknown}"
 if [ -n "$SDK" ] && [ "$SDK" -lt 26 ]; then
-    ui_print "  [WARNING] Android 8.0+ (SDK 26+) is required."
-    ui_print "  The filter may not work correctly on this device."
-    ui_print ""
+    abort "  Android 8.0 (API 26) or newer is required."
 fi
 
-# ------ SurfaceFlinger binary check ------
-if [ ! -f "/system/bin/service" ]; then
-    ui_print "  [WARNING] /system/bin/service not found."
-    ui_print "  SurfaceFlinger control will not work on this ROM."
-    ui_print ""
+if [ ! -x /system/bin/service ]; then
+    ui_print "  [WARNING] /system/bin/service is unavailable."
+    ui_print "  The module can install, but the filter may not work on this ROM."
 fi
 
-# ------ Set binary permissions ------
-ui_print "  Setting binary permissions..."
-set_perm "$MODPATH/system/bin/bluefilter" root root 0755
-set_perm "$MODPATH/system/bin/bluefilter-daemon" root root 0755
+# Magisk boot-mode updates are staged in modules_update. Copy only durable,
+# known state from the live module; never carry PID, lock, or schedule-owner files.
+if [ "$MODPATH" != "$LIVE_MODDIR" ] && [ -d "$LIVE_MODDIR" ]; then
+    for name in config.conf autoboot enabled .installed; do
+        [ -f "$LIVE_MODDIR/$name" ] && cp -f "$LIVE_MODDIR/$name" "$MODPATH/$name"
+    done
+    ui_print "  Existing settings copied into the staged update."
+fi
 
-# ------ Install config ------
-# On a fresh install: copy the bundled default.
-# On an upgrade: keep the user's existing config untouched.
-mkdir -p "$MODDIR"
-if [ ! -f "$CONFIG_DEST" ]; then
-    cp "$MODPATH/config.conf" "$CONFIG_DEST"
-    ui_print "  Default config installed."
+[ -f "$CONFIG_DEST" ] || abort "  Bundled configuration is missing."
+[ -r "$MODPATH/system/bin/bluefilter-core" ] || abort "  Shared filter core is missing."
+
+. "$MODPATH/system/bin/bluefilter-core"
+if ! migrate_config "$CONFIG_DEST"; then
+    abort "  Configuration migration failed."
+fi
+if ! config_is_valid "$CONFIG_DEST"; then
+    cp -f "$CONFIG_DEST" "$MODPATH/config.conf.invalid"
+    unzip -p "$ZIPFILE" config.conf > "$CONFIG_DEST" || abort "  Could not restore safe defaults."
+    ui_print "  Invalid configuration backed up as config.conf.invalid."
+fi
+
+if [ ! -f "$MODPATH/.installed" ]; then
+    rm -f "$MODPATH/enabled" "$MODPATH/autoboot"
+    : > "$MODPATH/.installed"
+    ui_print "  Fresh install: filter and auto-start are disabled."
 else
-    ui_print "  Existing config preserved."
-    # Migrate config: add [schedule] and [notification] sections if missing
-    if ! grep -q '^\[schedule\]' "$CONFIG_DEST" 2>/dev/null; then
-        cat >> "$CONFIG_DEST" << 'CONF'
-
-[schedule]
-enabled=0
-sunset=21:00
-sunrise=06:00
-
-[notification]
-enabled=0
-CONF
-        ui_print "  Config migrated: added schedule/notification sections."
-    fi
+    ui_print "  Upgrade: profile, schedule, notification, and boot settings preserved."
 fi
 
-# ------ First-install vs upgrade detection ------
-# We use a sentinel file written at the end of the first install.
-# If it is absent this is a fresh install; if present, it's an upgrade.
-SENTINEL="$MODDIR/.installed"
-if [ ! -f "$SENTINEL" ]; then
-    # Fresh install — start with the filter off and auto-boot off.
-    rm -f "$MODDIR/enabled" "$MODDIR/autoboot"
-    touch "$SENTINEL"
-    ui_print "  Fresh install — filter starts disabled."
-else
-    ui_print "  Upgrade — existing filter state preserved."
-fi
+rm -f "$MODPATH/.auto_enabled" "$MODPATH/.manual_off" "$MODPATH/daemon.pid"
+rm -f "$MODPATH/.bluefilter.lock/pid" 2>/dev/null
+rmdir "$MODPATH/.bluefilter.lock" 2>/dev/null
+
+set_perm "$MODPATH/system/bin/bluefilter" 0 0 0755
+set_perm "$MODPATH/system/bin/bluefilter-daemon" 0 0 0755
+set_perm "$MODPATH/system/bin/bluefilter-core" 0 0 0644
+set_perm "$MODPATH/service.sh" 0 0 0755
+set_perm "$MODPATH/action.sh" 0 0 0755
+set_perm "$CONFIG_DEST" 0 0 0600
+set_perm_recursive "$MODPATH/webroot" 0 0 0755 0644
 
 ui_print ""
-ui_print "  Installation complete."
+ui_print "  Installation complete. Reboot before use."
 ui_print ""

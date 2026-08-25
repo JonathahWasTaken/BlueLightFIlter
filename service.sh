@@ -1,36 +1,43 @@
 #!/system/bin/sh
-# =============================================================
-# BlueFilter - Boot service
-# Executed by Magisk / KernelSU after every boot
-# =============================================================
+# Late-start boot hook for Magisk, KernelSU, and compatible module managers.
 
-MODDIR="/data/adb/modules/bluelightfilter"
-AUTOBOOT_FILE="$MODDIR/autoboot"
+MODDIR=${0%/*}
+CLI=/system/bin/bluefilter
+SERVICE=/system/bin/service
+GETPROP=/system/bin/getprop
 
-# Wait until Android has fully booted
-until [ "$(getprop sys.boot_completed)" = "1" ]; do
+# Boot has a bounded wait so this script never remains resident forever.
+attempt=0
+while [ "$($GETPROP sys.boot_completed 2>/dev/null)" != 1 ] && [ "$attempt" -lt 180 ]; do
+    attempt=$((attempt + 1))
     sleep 2
 done
 
-# Give SurfaceFlinger extra time to initialize and become stable.
-# Without this delay the service call can silently fail.
-sleep 5
+# SurfaceFlinger may become reachable shortly after boot-completed.
+attempt=0
+surfaceflinger_ready=0
+while [ "$attempt" -lt 60 ]; do
+    result=$($SERVICE check SurfaceFlinger 2>&1)
+    case "$result" in
+        *'not found'*) ;;
+        *) surfaceflinger_ready=1; break ;;
+    esac
+    attempt=$((attempt + 1))
+    sleep 1
+done
 
-# Only apply the filter if the user explicitly enabled auto-start
-# on boot via the WebUI Quick Actions. The autoboot file is
-# created / removed by the GUI — never by the filter toggle itself.
-if [ -f "$AUTOBOOT_FILE" ]; then
-    /system/bin/bluefilter start
+# Runtime state never survives a compositor restart by itself.
+rm -f "$MODDIR/enabled" "$MODDIR/.auto_enabled" "$MODDIR/.manual_off" "$MODDIR/daemon.pid"
+
+[ "$surfaceflinger_ready" -eq 1 ] || exit 0
+
+if [ -f "$MODDIR/autoboot" ]; then
+    "$CLI" _boot-on >/dev/null 2>&1
 fi
 
-# ------ Start background daemon ------
-# The daemon handles sunset/sunrise scheduling and persistent
-# notification. It runs unconditionally so that enabling these
-# features from the WebUI takes effect without a reboot.
-PIDFILE="$MODDIR/daemon.pid"
-if [ -f "$PIDFILE" ]; then
-    old_pid=$(cat "$PIDFILE")
-    kill -0 "$old_pid" 2>/dev/null && kill "$old_pid" 2>/dev/null
-    rm -f "$PIDFILE"
-fi
-nohup /system/bin/bluefilter-daemon > /dev/null 2>&1 &
+# An enabled schedule can supersede an inactive boot state, but never a
+# successfully restored autoboot state it does not own.
+"$CLI" schedule evaluate >/dev/null 2>&1
+"$CLI" daemon-reconcile >/dev/null 2>&1
+
+exit 0

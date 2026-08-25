@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+pidfile="${BLUEFILTER_MODDIR:?}/daemon.pid"
+printf '%s\n' "$$" > "$pidfile"
+cleanup() {
+    rm -f "$pidfile"
+    exit 0
+}
+trap cleanup TERM INT HUP
+while :; do sleep 1; done

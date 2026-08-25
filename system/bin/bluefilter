@@ -1,211 +1,610 @@
 #!/system/bin/sh
-# =============================================================
-# BlueFilter - System-wide blue light filter via SurfaceFlinger
-# Managed exclusively via the WebUI. Do not edit config manually.
-# =============================================================
+# BlueLightFIlter public automation API.
 
 export PATH="/system/bin:/system/xbin:$PATH"
 
-MODDIR="/data/adb/modules/bluelightfilter"
-CONFIG_FILE="$MODDIR/config.conf"
-STATE_FILE="$MODDIR/enabled"
-
-# ------ Verify SurfaceFlinger is accessible ------
-if [ ! -f "/system/bin/service" ]; then
-    echo "Error: /system/bin/service not found." >&2
-    exit 1
+MODDIR=${BLUEFILTER_MODDIR:-/data/adb/modules/bluelightfilter}
+if [ "${BLUEFILTER_TESTING:-0}" = 1 ]; then
+    CORE=${BLUEFILTER_CORE:?}
+    SERVICE=${BLUEFILTER_SERVICE:?}
+    GETPROP=${BLUEFILTER_GETPROP:-getprop}
+    SETTINGS=${BLUEFILTER_SETTINGS:-settings}
+    DAEMON_BIN=${BLUEFILTER_DAEMON:-/system/bin/bluefilter-daemon}
+else
+    CORE=/system/bin/bluefilter-core
+    SERVICE=/system/bin/service
+    GETPROP=/system/bin/getprop
+    SETTINGS=/system/bin/settings
+    DAEMON_BIN=/system/bin/bluefilter-daemon
 fi
 
-# ------ Apply a 4x4 color transform matrix via SurfaceFlinger ------
-# Transaction code 1015 sets a per-display color matrix at the compositor
-# level. Covers the entire screen — status bar, navigation bar, all apps.
-# Matrix (column-major):
-#   R  0  0  0
-#   0  G  0  0
-#   0  0  B  0
-#   0  0  0  1
-apply_filter() {
-    service call SurfaceFlinger 1015 i32 1 \
-        f "$1" f 0 f 0 f 0 \
-        f 0 f "$2" f 0 f 0 \
-        f 0 f 0 f "$3" f 0 \
-        f 0 f 0 f 0 f 1 \
-        > /dev/null 2>&1
+CONFIG_FILE=$MODDIR/config.conf
+STATE_FILE=$MODDIR/enabled
+AUTOBOOT_FILE=$MODDIR/autoboot
+AUTO_SENTINEL=$MODDIR/.auto_enabled
+MANUAL_OFF_FILE=$MODDIR/.manual_off
+PIDFILE=$MODDIR/daemon.pid
+LOCK_DIR=$MODDIR/.bluefilter.lock
+
+if [ ! -r "$CORE" ]; then
+    printf 'bluefilter: shared core is missing: %s\n' "$CORE" >&2
+    exit 3
+fi
+# Production path is fixed; tests inject the same trusted library.
+# shellcheck disable=SC1090
+. "$CORE"
+
+error() {
+    printf 'bluefilter: %s\n' "$*" >&2
 }
 
-# ------ Reset to identity matrix (no filter) ------
-remove_filter() {
-    service call SurfaceFlinger 1015 i32 1 \
-        f 1 f 0 f 0 f 0 \
-        f 0 f 1 f 0 f 0 \
-        f 0 f 0 f 1 f 0 \
-        f 0 f 0 f 0 f 1 \
-        > /dev/null 2>&1
+usage() {
+    cat <<'EOF'
+Usage: bluefilter COMMAND [ARGUMENTS]
+
+Filter:
+  on [PROFILE]              Enable saved or named profile
+  off                       Restore identity matrix
+  toggle [PROFILE]          Toggle saved or named profile
+  reset                     Emergency identity reset; ignores config
+  is-on                     Exit 0 when enabled, 1 when disabled
+  current                   Print active profile or "off"
+  status [--quiet|--json]   Human, predicate, or machine status
+
+Profiles:
+  profile [list|get|set NAME]
+  apply PROFILE             Save and enable a profile
+  brightness [0.10-1.00]    Get or set compositor brightness
+  matrix get|set VALUES     Get or set 16-value custom matrix
+
+Automation:
+  autoboot on|off|status
+  schedule on|off|set HH:MM HH:MM|status|evaluate
+  notification on|off|status
+  daemon-start|daemon-stop|daemon-status|daemon-reconcile
+
+Compatibility: start [PROFILE], stop, diag [--test]
+EOF
 }
 
-# ------ Read saved RGB from config.conf ------
-# Prints "R G B" on stdout, returns 1 if nothing is saved.
-load_saved_rgb() {
-    local profile
-    profile=$(awk '
-        /^\[default\]/ { in_d=1; next }
-        /^\[/          { in_d=0 }
-        in_d && /^profile=/ { split($0,a,"="); print a[2]; exit }
-    ' "$CONFIG_FILE" 2>/dev/null)
-
-    [ -z "$profile" ] || [ "$profile" = "off" ] && return 1
-
-    local rgb
-    rgb=$(awk -v p="$profile" '
-        /^\[profiles\]/ { in_p=1; next }
-        /^\[/           { in_p=0 }
-        in_p && $0 ~ "^"p"=" { split($0,a,"="); print a[2]; exit }
-    ' "$CONFIG_FILE" 2>/dev/null)
-
-    [ -z "$rgb" ] && return 1
-    echo "$rgb"
+require_root() {
+    [ "${BLUEFILTER_TESTING:-0}" = 1 ] && return 0
+    [ "$(id -u 2>/dev/null)" = 0 ] || {
+        error 'root is required'
+        return 1
+    }
 }
 
-# ------ Safety clamp: Red must be >= 0.10 ------
-# Prevents the screen from going completely black.
-clamp_red() {
-    awk -v r="$1" 'BEGIN {
-        r = r + 0
-        if (r < 0.10) r = 0.10
-        printf "%.2f", r
-    }'
+ensure_config() {
+    mkdir -p "$MODDIR" || return 1
+    if [ ! -f "$CONFIG_FILE" ]; then
+        : > "$CONFIG_FILE" || return 1
+        config_set "$CONFIG_FILE" meta schema "$BLUEFILTER_SCHEMA" || return 1
+        config_set "$CONFIG_FILE" default profile "$BLUEFILTER_DEFAULT_PROFILE" || return 1
+        config_set "$CONFIG_FILE" default brightness "$(profile_default_brightness "$BLUEFILTER_DEFAULT_PROFILE")" || return 1
+        config_set "$CONFIG_FILE" custom matrix "$BLUEFILTER_IDENTITY_MATRIX" || return 1
+        config_set "$CONFIG_FILE" schedule enabled 0 || return 1
+        config_set "$CONFIG_FILE" schedule sunset 21:00 || return 1
+        config_set "$CONFIG_FILE" schedule sunrise 06:00 || return 1
+        config_set "$CONFIG_FILE" notification enabled 0 || return 1
+    else
+        migrate_config "$CONFIG_FILE" || return 1
+    fi
 }
 
-# =============================================================
-# Commands — called by service.sh and the WebUI shell bridge
-# =============================================================
-case "$1" in
+lock_or_exit() {
+    mkdir -p "$MODDIR" 2>/dev/null || {
+        error "cannot access module directory: $MODDIR"
+        exit 3
+    }
+    acquire_lock "$LOCK_DIR" 30 || {
+        error 'another operation holds the state lock'
+        exit 4
+    }
+    trap 'release_lock "$LOCK_DIR"' 0 HUP INT TERM
+}
 
-    start)
-        rgb=$(load_saved_rgb)
-        if [ $? -eq 0 ] && [ -n "$rgb" ]; then
-            r=$(echo "$rgb" | awk '{print $1}')
-            g=$(echo "$rgb" | awk '{print $2}')
-            b=$(echo "$rgb" | awk '{print $3}')
-            r=$(clamp_red "$r")
-            apply_filter "$r" "$g" "$b"
-        else
-            # No saved color — apply neutral (no filter effect)
-            apply_filter "1.00" "1.00" "1.00"
+surfaceflinger_available() {
+    [ -x "$SERVICE" ] || return 1
+    output=$($SERVICE check SurfaceFlinger 2>&1) || return 1
+    case "$output" in *'not found'*) return 1 ;; esac
+    return 0
+}
+
+surfaceflinger_apply() {
+    matrix=$1
+    validate_matrix "$matrix" || {
+        error 'refusing unsafe or malformed matrix'
+        return 2
+    }
+    surfaceflinger_available || {
+        error 'SurfaceFlinger service is unavailable'
+        return 3
+    }
+    # Intentional split after strict 16-decimal matrix validation.
+    # shellcheck disable=SC2086
+    set -- $matrix
+    output=$($SERVICE call SurfaceFlinger 1015 i32 1 \
+        f "$1" f "$2" f "$3" f "$4" \
+        f "$5" f "$6" f "$7" f "$8" \
+        f "$9" f "${10}" f "${11}" f "${12}" \
+        f "${13}" f "${14}" f "${15}" f "${16}" 2>&1)
+    status=$?
+    if [ "$status" -ne 0 ]; then
+        error "SurfaceFlinger call failed: $output"
+        return 3
+    fi
+    return 0
+}
+
+matrix_for() {
+    profile=$1
+    brightness=$2
+    if [ "$profile" = custom ]; then
+        matrix=$(config_get "$CONFIG_FILE" custom matrix 2>/dev/null || true)
+    else
+        matrix=$(profile_matrix "$profile" 2>/dev/null || true)
+    fi
+    validate_matrix "$matrix" || return 1
+    scale_matrix "$matrix" "$brightness"
+}
+
+clear_schedule_ownership() {
+    rm -f "$AUTO_SENTINEL" "$MANUAL_OFF_FILE"
+}
+
+activate_filter() {
+    requested_profile=${1:-}
+    source=${2:-manual}
+    persist=${3:-1}
+    ensure_config || {
+        error 'configuration cannot be initialized'
+        return 2
+    }
+
+    if [ -n "$requested_profile" ]; then
+        profile=$requested_profile
+        profile_exists "$profile" || {
+            error "unknown profile: $profile"
+            return 2
+        }
+        brightness=$(profile_default_brightness "$profile")
+    else
+        profile=$(configured_profile "$CONFIG_FILE")
+        brightness=$(configured_brightness "$CONFIG_FILE" "$profile")
+    fi
+
+    matrix=$(matrix_for "$profile" "$brightness") || {
+        error "profile '$profile' has an invalid matrix"
+        return 2
+    }
+    validate_matrix "$matrix" || {
+        error "profile '$profile' and brightness '$brightness' produce an unsafe matrix"
+        return 2
+    }
+    if [ -n "$requested_profile" ] && [ "$persist" = 1 ]; then
+        config_set "$CONFIG_FILE" default profile "$profile" || return 2
+        config_set "$CONFIG_FILE" default brightness "$brightness" || return 2
+    fi
+    surfaceflinger_apply "$matrix" || return $?
+    write_state "$STATE_FILE" "$profile" "$brightness" "$source" || return 3
+
+    if [ "$source" = schedule ]; then
+        : > "$AUTO_SENTINEL"
+        rm -f "$MANUAL_OFF_FILE"
+    else
+        clear_schedule_ownership
+    fi
+    printf 'on %s %s\n' "$profile" "$brightness"
+}
+
+deactivate_filter() {
+    reason=${1:-manual}
+    was_auto=0
+    [ -f "$AUTO_SENTINEL" ] && was_auto=1
+    surfaceflinger_apply "$BLUEFILTER_IDENTITY_MATRIX" || return $?
+    rm -f "$STATE_FILE" "$AUTO_SENTINEL"
+    if [ "$reason" = manual ] && [ "$was_auto" -eq 1 ]; then
+        : > "$MANUAL_OFF_FILE"
+    elif [ "$reason" = schedule ]; then
+        rm -f "$MANUAL_OFF_FILE"
+    fi
+    printf 'off\n'
+}
+
+daemon_running() {
+    [ -f "$PIDFILE" ] || return 1
+    pid=$(cat "$PIDFILE" 2>/dev/null || true)
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    kill -0 "$pid" 2>/dev/null || return 1
+    if [ -r "/proc/$pid/cmdline" ]; then
+        command_line=$(tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)
+        case "$command_line" in *bluefilter-daemon*) ;; *) return 1 ;; esac
+    fi
+    return 0
+}
+
+daemon_start() {
+    daemon_running && return 0
+    rm -f "$PIDFILE"
+    [ -x "$DAEMON_BIN" ] || {
+        error "daemon is unavailable: $DAEMON_BIN"
+        return 3
+    }
+    nohup "$DAEMON_BIN" >/dev/null 2>&1 &
+    count=0
+    while [ "$count" -lt 20 ]; do
+        daemon_running && return 0
+        count=$((count + 1))
+        sleep 0.05
+    done
+    error 'daemon did not start'
+    return 3
+}
+
+daemon_stop() {
+    if daemon_running; then
+        pid=$(cat "$PIDFILE")
+        kill "$pid" 2>/dev/null || return 3
+    fi
+    rm -f "$PIDFILE"
+}
+
+feature_enabled() {
+    value=$(config_get "$CONFIG_FILE" "$1" enabled 2>/dev/null || true)
+    [ "$value" = 1 ]
+}
+
+daemon_reconcile() {
+    ensure_config || return 2
+    if feature_enabled schedule || feature_enabled notification; then
+        daemon_start
+    else
+        daemon_stop
+    fi
+}
+
+read_valid_state() {
+    [ -f "$STATE_FILE" ] || return 1
+    ACTIVE_PROFILE=$(state_get "$STATE_FILE" profile 2>/dev/null || true)
+    ACTIVE_BRIGHTNESS=$(state_get "$STATE_FILE" brightness 2>/dev/null || true)
+    ACTIVE_SOURCE=$(state_get "$STATE_FILE" source 2>/dev/null || true)
+    profile_exists "$ACTIVE_PROFILE" || return 1
+    validate_brightness "$ACTIVE_BRIGHTNESS" || return 1
+    case "$ACTIVE_SOURCE" in manual|schedule|boot) return 0 ;; *) return 1 ;; esac
+}
+
+status_json() {
+    ensure_config >/dev/null 2>&1 || true
+    if read_valid_state; then
+        enabled=true
+        profile=$ACTIVE_PROFILE
+        brightness=$ACTIVE_BRIGHTNESS
+        source=$ACTIVE_SOURCE
+    else
+        enabled=false
+        profile=$(configured_profile "$CONFIG_FILE")
+        brightness=$(configured_brightness "$CONFIG_FILE" "$profile")
+        source=off
+    fi
+    feature_enabled schedule && scheduled=true || scheduled=false
+    daemon_running && daemon=true || daemon=false
+    [ -f "$AUTOBOOT_FILE" ] && autoboot=true || autoboot=false
+    printf '{"enabled":%s,"profile":"%s","brightness":%s,"source":"%s","scheduled":%s,"daemon":%s,"autoboot":%s,"compositorVerified":false}\n' \
+        "$enabled" "$profile" "$brightness" "$source" "$scheduled" "$daemon" "$autoboot"
+}
+
+evaluate_schedule() {
+    ensure_config || return 2
+    feature_enabled schedule || {
+        rm -f "$AUTO_SENTINEL" "$MANUAL_OFF_FILE"
+        return 0
+    }
+    sunset=$(config_get "$CONFIG_FILE" schedule sunset 2>/dev/null || true)
+    sunrise=$(config_get "$CONFIG_FILE" schedule sunrise 2>/dev/null || true)
+    if ! validate_time "$sunset" || ! validate_time "$sunrise"; then
+        error 'schedule contains an invalid time'
+        return 2
+    fi
+    now=${BLUEFILTER_NOW_HHMM:-$(date +%H%M)}
+    now=${now#0}
+    [ -n "$now" ] || now=0
+    sunset_int=$(time_to_int "$sunset")
+    sunrise_int=$(time_to_int "$sunrise")
+    if is_night_window "$now" "$sunset_int" "$sunrise_int"; then
+        if [ ! -f "$STATE_FILE" ] && [ ! -f "$MANUAL_OFF_FILE" ]; then
+            activate_filter '' schedule 0 >/dev/null
         fi
-        touch "$STATE_FILE"
-        echo "started"
-        ;;
+    else
+        if [ -f "$AUTO_SENTINEL" ]; then
+            deactivate_filter schedule >/dev/null
+        fi
+        rm -f "$MANUAL_OFF_FILE"
+    fi
+}
 
-    stop)
-        remove_filter
-        rm -f "$STATE_FILE"
-        echo "stopped"
-        ;;
+DIAG_RESTORE_MATRIX=
+restore_diag_matrix() {
+    if [ -n "$DIAG_RESTORE_MATRIX" ]; then
+        surfaceflinger_apply "$DIAG_RESTORE_MATRIX" >/dev/null 2>&1 || true
+    fi
+    release_lock "$LOCK_DIR"
+}
 
-    status)
-        [ -f "$STATE_FILE" ] && echo "running" || echo "stopped"
-        ;;
-
-    reset)
-        remove_filter
-        rm -f "$STATE_FILE"
-        echo "reset"
-        ;;
-
-    daemon-start)
-        PIDFILE="$MODDIR/daemon.pid"
-        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-            echo "daemon already running (PID $(cat "$PIDFILE"))"
+diagnostics() {
+    run_test=${1:-0}
+    printf '%s\n' '=== BlueLightFIlter Diagnostics ==='
+    printf 'Android: %s (API %s)\n' "$($GETPROP ro.build.version.release 2>/dev/null)" "$($GETPROP ro.build.version.sdk 2>/dev/null)"
+    printf 'Device: %s %s\n' "$($GETPROP ro.product.manufacturer 2>/dev/null)" "$($GETPROP ro.product.model 2>/dev/null)"
+    printf 'Build: %s\n' "$($GETPROP ro.build.display.id 2>/dev/null)"
+    if [ -d /data/adb/magisk ]; then root=Magisk
+    elif [ -d /data/adb/ksu ]; then root=KernelSU
+    elif [ -d /data/adb/ap ]; then root=APatch
+    else root='unknown/root shell'; fi
+    printf 'Root environment: %s\n' "$root"
+    if surfaceflinger_available; then sf=available; else sf=unavailable; fi
+    printf 'SurfaceFlinger: %s\n' "$sf"
+    printf 'SurfaceFlinger transaction: 1015 (AOSP Android 8-16; vendor-dependent)\n'
+    if config_is_valid "$CONFIG_FILE"; then config=valid; else config=invalid; fi
+    printf 'Configuration: %s (schema %s)\n' "$config" "$(config_get "$CONFIG_FILE" meta schema 2>/dev/null || printf '?')"
+    status_json
+    for key in night_display_activated accessibility_display_inversion_enabled accessibility_display_daltonizer_enabled reduce_bright_colors_activated display_white_balance_enabled; do
+        value=$($SETTINGS get secure "$key" 2>/dev/null || printf '?')
+        printf 'Conflict setting %s=%s\n' "$key" "$value"
+    done
+    printf 'SELinux: %s\n' "$(getenforce 2>/dev/null || printf unknown)"
+    for file in "$CONFIG_FILE" "$STATE_FILE" "$AUTOBOOT_FILE" "$PIDFILE"; do
+        if [ -e "$file" ]; then ls -ld "$file" 2>/dev/null; else printf 'Missing/inactive: %s\n' "$file"; fi
+    done
+    if [ "$run_test" = 1 ]; then
+        if ! read_valid_state; then
+            printf 'Transform test: skipped (inactive; original compositor matrix cannot be read safely)\n'
         else
-            rm -f "$PIDFILE"
-            nohup /system/bin/bluefilter-daemon > /dev/null 2>&1 &
+            original=$(matrix_for "$ACTIVE_PROFILE" "$ACTIVE_BRIGHTNESS") || return 2
+            test_matrix=$(scale_matrix "$(profile_matrix red)" 0.50)
+            DIAG_RESTORE_MATRIX=$original
+            trap restore_diag_matrix 0 HUP INT TERM
+            surfaceflinger_apply "$test_matrix" || return $?
             sleep 1
-            if [ -f "$PIDFILE" ]; then
-                echo "daemon started (PID $(cat "$PIDFILE"))"
-            else
-                echo "daemon failed to start"
+            surfaceflinger_apply "$original" || return $?
+            DIAG_RESTORE_MATRIX=
+            trap 'release_lock "$LOCK_DIR"' 0 HUP INT TERM
+            printf 'Transform test: transaction sent; active module matrix restored\n'
+        fi
+    fi
+    printf '%s\n' 'Note: the compositor matrix cannot be read back; visual state is not programmatically verified.'
+}
+
+require_root || exit 3
+
+command=${1:-help}
+shift 2>/dev/null || true
+
+case "$command" in
+    help|-h|--help)
+        usage
+        ;;
+    reset)
+        lock_or_exit
+        surfaceflinger_apply "$BLUEFILTER_IDENTITY_MATRIX"
+        result=$?
+        rm -f "$STATE_FILE" "$AUTO_SENTINEL" "$MANUAL_OFF_FILE"
+        [ "$result" -eq 0 ] || exit "$result"
+        printf 'reset\n'
+        ;;
+    is-on)
+        read_valid_state >/dev/null 2>&1
+        ;;
+    current)
+        if read_valid_state; then printf '%s\n' "$ACTIVE_PROFILE"; else printf 'off\n'; fi
+        ;;
+    status)
+        case ${1:-} in
+            --quiet) read_valid_state >/dev/null 2>&1 ;;
+            --json) status_json ;;
+            '')
+                if read_valid_state; then
+                    printf 'on %s %s %s\n' "$ACTIVE_PROFILE" "$ACTIVE_BRIGHTNESS" "$ACTIVE_SOURCE"
+                else
+                    ensure_config >/dev/null 2>&1 || true
+                    profile=$(configured_profile "$CONFIG_FILE")
+                    printf 'off %s %s\n' "$profile" "$(configured_brightness "$CONFIG_FILE" "$profile")"
+                fi
+                ;;
+            *) error 'status accepts only --quiet or --json'; exit 2 ;;
+        esac
+        ;;
+    on|start)
+        [ "$#" -le 1 ] || { error 'on accepts at most one profile'; exit 2; }
+        lock_or_exit
+        activate_filter "${1:-}" manual 1 || exit $?
+        ;;
+    apply)
+        [ "$#" -eq 1 ] || { error 'apply requires one profile'; exit 2; }
+        lock_or_exit
+        activate_filter "$1" manual 1 || exit $?
+        ;;
+    off|stop)
+        [ "$#" -eq 0 ] || { error 'off accepts no arguments'; exit 2; }
+        lock_or_exit
+        deactivate_filter manual || exit $?
+        ;;
+    toggle)
+        [ "$#" -le 1 ] || { error 'toggle accepts at most one profile'; exit 2; }
+        lock_or_exit
+        if read_valid_state; then deactivate_filter manual || exit $?; else activate_filter "${1:-}" manual 1 || exit $?; fi
+        ;;
+    profile)
+        ensure_config || exit 2
+        subcommand=${1:-get}
+        case "$subcommand" in
+            list) profile_names ;;
+            get) configured_profile "$CONFIG_FILE" ;;
+            set)
+                [ "$#" -eq 2 ] || { error 'profile set requires one name'; exit 2; }
+                profile_exists "$2" || { error "unknown profile: $2"; exit 2; }
+                lock_or_exit
+                brightness=$(profile_default_brightness "$2")
+                matrix=$(matrix_for "$2" "$brightness") || {
+                    error "profile '$2' has an invalid matrix"
+                    exit 2
+                }
+                validate_matrix "$matrix" || {
+                    error "profile '$2' and brightness '$brightness' produce an unsafe matrix"
+                    exit 2
+                }
+                config_set "$CONFIG_FILE" default profile "$2" || exit 2
+                config_set "$CONFIG_FILE" default brightness "$brightness" || exit 2
+                if read_valid_state; then activate_filter "$2" manual 1 >/dev/null || exit $?; fi
+                printf '%s\n' "$2"
+                ;;
+            *) error 'profile expects list, get, or set NAME'; exit 2 ;;
+        esac
+        ;;
+    brightness)
+        ensure_config || exit 2
+        if [ "$#" -eq 0 ]; then
+            profile=$(configured_profile "$CONFIG_FILE")
+            configured_brightness "$CONFIG_FILE" "$profile"
+        elif [ "$#" -eq 1 ] && validate_brightness "$1"; then
+            lock_or_exit
+            profile=$(configured_profile "$CONFIG_FILE")
+            matrix=$(matrix_for "$profile" "$1") || {
+                error "profile '$profile' has an invalid matrix"
+                exit 2
+            }
+            validate_matrix "$matrix" || {
+                error "brightness '$1' makes profile '$profile' unsafe"
+                exit 2
+            }
+            config_set "$CONFIG_FILE" default brightness "$1" || exit 2
+            if read_valid_state; then
+                surfaceflinger_apply "$matrix" || exit $?
+                write_state "$STATE_FILE" "$profile" "$1" manual || exit 3
+                clear_schedule_ownership
             fi
+            printf '%s\n' "$1"
+        else
+            error 'brightness must be between 0.10 and 1.00'
+            exit 2
         fi
         ;;
-
+    matrix)
+        ensure_config || exit 2
+        case ${1:-} in
+            get) config_get "$CONFIG_FILE" custom matrix || exit 2 ;;
+            set)
+                shift
+                matrix=$*
+                validate_matrix "$matrix" || { error 'custom matrix is unsafe or malformed'; exit 2; }
+                lock_or_exit
+                config_set "$CONFIG_FILE" custom matrix "$matrix" || exit 2
+                config_set "$CONFIG_FILE" default profile custom || exit 2
+                config_set "$CONFIG_FILE" default brightness 1.00 || exit 2
+                if read_valid_state; then activate_filter custom manual 1 >/dev/null || exit $?; fi
+                printf 'custom\n'
+                ;;
+            *) error 'matrix expects get or set followed by 16 values'; exit 2 ;;
+        esac
+        ;;
+    autoboot)
+        case ${1:-} in
+            on) lock_or_exit; : > "$AUTOBOOT_FILE"; printf 'on\n' ;;
+            off) lock_or_exit; rm -f "$AUTOBOOT_FILE"; printf 'off\n' ;;
+            status) [ -f "$AUTOBOOT_FILE" ] && printf 'on\n' || printf 'off\n' ;;
+            *) error 'autoboot expects on, off, or status'; exit 2 ;;
+        esac
+        ;;
+    schedule)
+        ensure_config || exit 2
+        case ${1:-} in
+            on|off)
+                lock_or_exit
+                [ "$1" = on ] && value=1 || value=0
+                config_set "$CONFIG_FILE" schedule enabled "$value" || exit 2
+                if [ "$value" = 1 ]; then
+                    evaluate_schedule || exit $?
+                else
+                    if read_valid_state && [ "$ACTIVE_SOURCE" = schedule ]; then
+                        write_state "$STATE_FILE" "$ACTIVE_PROFILE" "$ACTIVE_BRIGHTNESS" manual || exit 3
+                    fi
+                    rm -f "$AUTO_SENTINEL" "$MANUAL_OFF_FILE"
+                fi
+                daemon_reconcile || exit $?
+                printf '%s\n' "$1"
+                ;;
+            set)
+                if [ "$#" -ne 3 ] || ! validate_time "$2" || ! validate_time "$3"; then
+                    error 'schedule set requires two HH:MM times'
+                    exit 2
+                fi
+                [ "$2" != "$3" ] || { error 'schedule start and end must differ'; exit 2; }
+                lock_or_exit
+                config_set "$CONFIG_FILE" schedule sunset "$2" || exit 2
+                config_set "$CONFIG_FILE" schedule sunrise "$3" || exit 2
+                evaluate_schedule || exit $?
+                printf '%s %s\n' "$2" "$3"
+                ;;
+            status)
+                printf '%s %s %s\n' \
+                    "$(config_get "$CONFIG_FILE" schedule enabled 2>/dev/null || printf 0)" \
+                    "$(config_get "$CONFIG_FILE" schedule sunset 2>/dev/null || printf '?')" \
+                    "$(config_get "$CONFIG_FILE" schedule sunrise 2>/dev/null || printf '?')"
+                ;;
+            evaluate) lock_or_exit; evaluate_schedule ;;
+            *) error 'schedule expects on, off, set, status, or evaluate'; exit 2 ;;
+        esac
+        ;;
+    notification)
+        ensure_config || exit 2
+        case ${1:-} in
+            on|off)
+                lock_or_exit
+                [ "$1" = on ] && value=1 || value=0
+                config_set "$CONFIG_FILE" notification enabled "$value" || exit 2
+                daemon_reconcile || exit $?
+                printf '%s\n' "$1"
+                ;;
+            status) feature_enabled notification && printf 'on\n' || printf 'off\n' ;;
+            *) error 'notification expects on, off, or status'; exit 2 ;;
+        esac
+        ;;
+    daemon-start)
+        lock_or_exit
+        daemon_start || exit $?
+        printf 'running %s\n' "$(cat "$PIDFILE")"
+        ;;
     daemon-stop)
-        PIDFILE="$MODDIR/daemon.pid"
-        if [ -f "$PIDFILE" ]; then
-            kill "$(cat "$PIDFILE")" 2>/dev/null
-            rm -f "$PIDFILE"
-            echo "daemon stopped"
-        else
-            echo "daemon not running"
-        fi
+        lock_or_exit
+        daemon_stop || exit $?
+        printf 'stopped\n'
         ;;
-
     daemon-status)
-        PIDFILE="$MODDIR/daemon.pid"
-        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-            echo "running (PID $(cat "$PIDFILE"))"
-        else
-            echo "stopped"
-        fi
+        if daemon_running; then printf 'running %s\n' "$(cat "$PIDFILE")"; else printf 'stopped\n'; fi
         ;;
-
+    daemon-reconcile)
+        lock_or_exit
+        daemon_reconcile || exit $?
+        daemon_running && printf 'running %s\n' "$(cat "$PIDFILE")" || printf 'stopped\n'
+        ;;
+    _schedule-on)
+        lock_or_exit
+        activate_filter '' schedule 0 >/dev/null || exit $?
+        ;;
+    _schedule-off)
+        lock_or_exit
+        deactivate_filter schedule >/dev/null || exit $?
+        ;;
+    _boot-on)
+        lock_or_exit
+        activate_filter '' boot 0 >/dev/null || exit $?
+        ;;
     diag)
-        echo "=== BlueFilter Diagnostics ==="
-        echo ""
-        echo "[1] /system/bin/service:"
-        ls -la /system/bin/service 2>/dev/null || echo "    NOT FOUND"
-        echo ""
-        echo "[2] SurfaceFlinger ping:"
-        /system/bin/service call SurfaceFlinger 1013 > /dev/null 2>&1 \
-            && echo "    OK" || echo "    FAILED"
-        echo ""
-        echo "[3] Config file:"
-        ls -la "$CONFIG_FILE" 2>/dev/null || echo "    NOT FOUND"
-        echo ""
-        echo "[4] Filter state:"
-        [ -f "$STATE_FILE" ] \
-            && echo "    ENABLED" || echo "    DISABLED"
-        echo ""
-        echo "[5] Auto-boot:"
-        [ -f "$MODDIR/autoboot" ] \
-            && echo "    ON" || echo "    OFF"
-        echo ""
-        echo "[6] Saved RGB:"
-        rgb=$(load_saved_rgb) \
-            && echo "    $rgb" || echo "    none"
-        echo ""
-        echo "[7] Daemon:"
-        PIDFILE="$MODDIR/daemon.pid"
-        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-            echo "    RUNNING (PID $(cat "$PIDFILE"))"
-        else
-            echo "    STOPPED"
-        fi
-        echo ""
-        echo "[8] Schedule:"
-        sched=$(awk '/^\[schedule\]/{s=1;next}/^\[/{s=0}s&&/^enabled=/{split($0,a,"=");print a[2]}' "$CONFIG_FILE" 2>/dev/null)
-        if [ "$sched" = "1" ]; then
-            sunset=$(awk '/^\[schedule\]/{s=1;next}/^\[/{s=0}s&&/^sunset=/{split($0,a,"=");print a[2]}' "$CONFIG_FILE" 2>/dev/null)
-            sunrise=$(awk '/^\[schedule\]/{s=1;next}/^\[/{s=0}s&&/^sunrise=/{split($0,a,"=");print a[2]}' "$CONFIG_FILE" 2>/dev/null)
-            echo "    ON (sunset=$sunset, sunrise=$sunrise)"
-        else
-            echo "    OFF"
-        fi
-        echo ""
-        echo "[9] Notification:"
-        notif=$(awk '/^\[notification\]/{n=1;next}/^\[/{n=0}n&&/^enabled=/{split($0,a,"=");print a[2]}' "$CONFIG_FILE" 2>/dev/null)
-        [ "$notif" = "1" ] && echo "    ON" || echo "    OFF"
-        echo ""
-        echo "[10] Red test (3 seconds)..."
-        apply_filter 1.0 0.25 0.10
-        sleep 3
-        remove_filter
-        echo "    Done. Did the screen turn red?"
-        echo ""
-        echo "=== End ==="
+        case ${1:-} in '') diagnostics 0 ;; --test) lock_or_exit; diagnostics 1 ;; *) error 'diag accepts only --test'; exit 2 ;; esac
         ;;
-
     *)
-        echo "Usage: bluefilter {start|stop|status|reset|diag|daemon-start|daemon-stop|daemon-status}"
+        error "unknown command: $command"
+        usage >&2
+        exit 2
         ;;
 esac

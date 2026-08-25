@@ -1,0 +1,67 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>BlueLightFIlter WebUI preview harness</title>
+<script>
+  const mockBridge = String.raw`<script>
+  window.__blfMock = {
+    enabled: false, profile: 'red-dim', brightness: 0.55, scheduled: false,
+    daemon: false, autoboot: false, notification: false, sunset: '21:00', sunrise: '06:00',
+    matrix: '1 0 0 0 0 0.5 0 0 0 0 0.2 0 0 0 0 1'
+  };
+  window.ksu = {
+    toast() {},
+    exec(command, _options, callback) {
+      const state = window.__blfMock;
+      let code = 0, stdout = '', stderr = '';
+      if (command.endsWith('status --json')) {
+        stdout = JSON.stringify({...state, source: state.enabled ? 'manual' : 'off', compositorVerified: false});
+      } else if (command.endsWith('schedule status')) {
+        stdout = (state.scheduled ? '1' : '0') + ' ' + state.sunset + ' ' + state.sunrise;
+      } else if (command.endsWith('notification status')) {
+        stdout = state.notification ? 'on' : 'off';
+      } else if (command.endsWith('matrix get')) {
+        stdout = state.matrix;
+      } else if (command.includes('matrix set ')) {
+        state.matrix = command.slice(command.indexOf('matrix set ') + 11);
+        state.profile = 'custom'; state.brightness = 1; stdout = 'custom';
+      } else if (command.includes('profile set ')) {
+        state.profile = command.split(' ').pop();
+        state.brightness = state.profile === 'red-dim' ? 0.55 : state.profile === 'red-extra-dim' ? 0.30 : 1;
+        stdout = state.profile;
+      } else if (command.includes(' brightness ')) {
+        state.brightness = Number(command.split(' ').pop()); stdout = state.brightness.toFixed(2);
+      } else if (command.endsWith(' on')) {
+        if (command.includes('autoboot')) state.autoboot = true;
+        else if (command.includes('schedule')) { state.scheduled = true; state.daemon = true; }
+        else if (command.includes('notification')) { state.notification = true; state.daemon = true; }
+        else state.enabled = true;
+        stdout = 'on';
+      } else if (command.endsWith(' off')) {
+        if (command.includes('autoboot')) state.autoboot = false;
+        else if (command.includes('schedule')) { state.scheduled = false; state.daemon = state.notification; }
+        else if (command.includes('notification')) { state.notification = false; state.daemon = state.scheduled; }
+        else state.enabled = false;
+        stdout = 'off';
+      } else if (command.includes('schedule set ')) {
+        const parts = command.split(' '); state.sunset = parts.at(-2); state.sunrise = parts.at(-1);
+        stdout = state.sunset + ' ' + state.sunrise;
+      } else if (command.endsWith(' diag')) {
+        stdout = '=== BlueLightFIlter Diagnostics ===\nSurfaceFlinger: available\nConfiguration: valid';
+      } else if (command.endsWith(' reset')) {
+        state.enabled = false; stdout = 'reset';
+      } else {
+        code = 2; stderr = 'Unsupported mock command: ' + command;
+      }
+      setTimeout(() => window[callback]?.(code, stdout, stderr), 10);
+    }
+  };
+  ` + '</scr' + 'ipt>';
+
+  fetch('../webroot/index.html')
+    .then((response) => response.text())
+    .then((html) => {
+      document.open();
+      document.write(html.replace('<script>', mockBridge + '<script>'));
+      document.close();
+    });
+</script>

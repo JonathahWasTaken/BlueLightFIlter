@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+case ${1:-} in
+    ro.build.version.sdk) printf '35\n' ;;
+    ro.build.version.release) printf '15\n' ;;
+    ro.product.manufacturer) printf 'OnePlus\n' ;;
+    ro.product.model) printf 'CPH2583\n' ;;
+    ro.build.display.id) printf 'CPH2583_15.0.0\n' ;;
+    sys.boot_completed) printf '1\n' ;;
+    *) printf '\n' ;;
+esac

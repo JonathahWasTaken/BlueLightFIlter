@@ -1,735 +1,718 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Blue Light Filter</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>BlueLightFIlter</title>
   <style>
     :root {
-      --bg:      #0f0f13;
-      --bg2:     #1a1a23;
-      --bg3:     #24243a;
-      --accent:  #e05a5a;
-      --accent2: #ff8c42;
-      --text:    #f0f0f0;
-      --text2:   #999;
-      --border:  #2e2e45;
-      --green:   #4caf50;
-      --radius:  14px;
+      --color-bg: #050506;
+      --color-surface: #101013;
+      --color-surface-raised: #17171c;
+      --color-border: #2d2a2d;
+      --color-text: #f6f1ee;
+      --color-muted: #b7ada8;
+      --color-primary: #e0695e;
+      --color-primary-strong: #f28072;
+      --color-accent: #e9a15b;
+      --color-success: #77c98d;
+      --color-warning: #efbd68;
+      --color-error: #ff8a80;
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 24px;
+      --space-6: 32px;
+      --radius-sm: 8px;
+      --radius-md: 14px;
+      --radius-lg: 20px;
+      --shadow-raised: 0 16px 48px rgba(0, 0, 0, .34);
     }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
+    * { box-sizing: border-box; }
+    html { background: var(--color-bg); }
     body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: 'Segoe UI', system-ui, sans-serif;
-      min-height: 100vh;
-      padding-bottom: 32px;
+      margin: 0;
+      min-height: 100dvh;
+      background: var(--color-bg);
+      color: var(--color-text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 16px;
+      line-height: 1.5;
+      padding-bottom: calc(var(--space-6) + env(safe-area-inset-bottom));
     }
+    body::before {
+      content: "";
+      display: block;
+      position: fixed;
+      inset: 0 0 auto;
+      height: 3px;
+      background: var(--color-primary);
+      z-index: 100;
+    }
+    button, input, summary { font: inherit; }
+    button, input[type="checkbox"], input[type="range"], summary {
+      touch-action: manipulation;
+    }
+    button { cursor: pointer; }
+    button:disabled, input:disabled { cursor: not-allowed; opacity: .46; }
+    :focus-visible {
+      outline: 3px solid var(--color-accent);
+      outline-offset: 3px;
+    }
+    .skip-link {
+      position: fixed;
+      top: var(--space-3);
+      left: var(--space-3);
+      z-index: 1000;
+      transform: translateY(-150%);
+      background: var(--color-text);
+      color: var(--color-bg);
+      padding: var(--space-2) var(--space-4);
+      border-radius: var(--radius-sm);
+    }
+    .skip-link:focus { transform: translateY(0); }
 
-    /* ── Header ── */
-    header {
-      background: linear-gradient(135deg, #1a0a0a, #2a1020);
-      padding: 22px 20px 18px;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      align-items: center;
-      gap: 14px;
+    .app-header {
       position: sticky;
       top: 0;
-      z-index: 10;
+      z-index: 40;
+      background: rgba(5, 5, 6, .94);
+      border-bottom: 1px solid var(--color-border);
     }
-    .moon-icon { font-size: 2.1rem; }
-    header h1  { font-size: 1.4rem; font-weight: 700; line-height: 1.2; }
-    header p   { font-size: 0.76rem; color: var(--text2); margin-top: 2px; }
-
-    .status-badge {
+    .header-inner {
+      max-width: 920px;
+      margin: 0 auto;
+      min-height: 76px;
+      padding: calc(var(--space-4) + env(safe-area-inset-top)) var(--space-4) var(--space-4);
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+    }
+    .brand-mark {
+      width: 38px;
+      height: 38px;
+      color: var(--color-primary-strong);
+      flex: 0 0 auto;
+    }
+    .brand h1 {
+      margin: 0;
+      font-size: clamp(1.12rem, .95rem + 1vw, 1.42rem);
+      line-height: 1.15;
+      letter-spacing: -.025em;
+    }
+    .brand p { margin: 3px 0 0; color: var(--color-muted); font-size: .78rem; }
+    .status-pill {
       margin-left: auto;
-      padding: 6px 16px;
-      border-radius: 20px;
-      font-size: 0.75rem;
-      font-weight: 700;
-      letter-spacing: .04em;
-      border: 1px solid var(--border);
-      background: #1e1e1e;
-      transition: background .3s, color .3s, border-color .3s;
-      flex-shrink: 0;
-    }
-    .status-badge.on  { background: #122a1a; border-color: var(--green); color: var(--green); }
-    .status-badge.off { background: #2a1010; border-color: var(--accent); color: var(--accent); }
-
-    /* ── Main ── */
-    main { padding: 16px; }
-
-    /* ── Cards ── */
-    .card {
-      background: var(--bg2);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 16px;
-      margin-bottom: 14px;
-    }
-    .card-title {
-      font-size: 0.68rem;
-      color: var(--text2);
-      text-transform: uppercase;
-      letter-spacing: .08em;
-      margin-bottom: 14px;
-    }
-
-    /* ── Filter toggle card ── */
-    .toggle-card {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 18px 20px;
-      background: var(--bg2);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      margin-bottom: 14px;
-      transition: border-color .3s;
-    }
-    .toggle-card.active { border-color: rgba(224,90,90,.5); }
-    .toggle-label h2 { font-size: 1rem; font-weight: 700; }
-
-    /* ── Toggle switch ── */
-    .switch {
-      position: relative;
-      display: inline-block;
-      width: 54px; height: 29px;
-      flex-shrink: 0;
-    }
-    .switch input { opacity: 0; width: 0; height: 0; }
-    .slider {
-      position: absolute; inset: 0;
-      background: #333;
-      border-radius: 29px;
-      cursor: pointer;
-      transition: background .3s;
-    }
-    .slider:before {
-      content: '';
-      position: absolute;
-      width: 23px; height: 23px;
-      left: 3px; bottom: 3px;
-      background: #fff;
-      border-radius: 50%;
-      transition: transform .3s;
-      box-shadow: 0 1px 4px rgba(0,0,0,.4);
-    }
-    input:checked + .slider { background: var(--accent); }
-    input:checked + .slider:before { transform: translateX(25px); }
-
-    /* ── RGB sliders ── */
-    .slider-row { margin-bottom: 16px; }
-    .slider-row:last-of-type { margin-bottom: 6px; }
-    .slider-row label {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 0.83rem;
-      margin-bottom: 8px;
-    }
-    .slider-row label span {
-      color: var(--accent2);
-      font-weight: 700;
-      min-width: 42px;
-      text-align: right;
-      font-variant-numeric: tabular-nums;
-    }
-    input[type=range] {
-      -webkit-appearance: none;
-      width: 100%;
-      height: 6px;
-      border-radius: 4px;
-      background: var(--bg3);
-      cursor: pointer;
-      outline: none;
-      /* hardware-accelerate the track so thumb dragging is GPU-composited */
-      will-change: background;
-      touch-action: pan-x;
-    }
-    input[type=range]::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      width: 24px; height: 24px;
-      border-radius: 50%;
-      background: var(--accent);
-      cursor: pointer;
-      box-shadow: 0 0 6px rgba(224,90,90,.4);
-      /* larger hit area prevents the "jump" when finger slightly misses */
-    }
-
-    /* ── Info rows ── */
-    .info-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 10px 0;
-      border-bottom: 1px solid var(--border);
-      font-size: 0.83rem;
-    }
-    .info-row:last-child { border-bottom: none; padding-bottom: 0; }
-    .info-row .lbl { color: var(--text2); }
-    .info-row .val { color: var(--accent2); font-weight: 600; font-variant-numeric: tabular-nums; }
-
-    /* ── Buttons ── */
-    .btn {
+      min-width: 74px;
+      min-height: 36px;
+      padding: 7px 12px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
-      padding: 11px 16px;
-      border-radius: 10px;
-      font-size: 0.85rem;
-      font-weight: 600;
-      cursor: pointer;
-      border: none;
-      transition: opacity .15s;
-      width: 100%;
+      gap: 7px;
+      border: 1px solid var(--color-border);
+      border-radius: 999px;
+      color: var(--color-muted);
+      font-size: .78rem;
+      font-weight: 700;
+      letter-spacing: .05em;
+      text-transform: uppercase;
     }
-    .btn:active { opacity: .6; }
-    .btn + .btn  { margin-top: 8px; }
-    .btn-primary { background: var(--accent); color: #fff; }
-    .btn-warning { background: #2a2000; color: #ffcc44; border: 1px solid #554400; }
-    .btn-danger  { background: #3a0a0a; color: #ff7070; border: 1px solid #6a1010; }
+    .status-pill::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .status-pill.on { color: var(--color-success); border-color: rgba(119, 201, 141, .45); }
 
-    /* ── Toast ── */
+    main {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: var(--space-4);
+    }
+    .runtime-state {
+      min-height: 72px;
+      margin: var(--space-4) 0;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: var(--space-4);
+      color: var(--color-muted);
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+    }
+    .runtime-state[hidden] { display: none; }
+    .skeleton-dot {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--color-primary);
+      animation: pulse 900ms ease-in-out infinite alternate;
+    }
+    @keyframes pulse { from { opacity: .3; } to { opacity: 1; } }
+    .error-state { color: var(--color-error); border-color: rgba(255, 138, 128, .42); }
+    .retry-button { margin-left: auto; }
+
+    .dashboard { display: grid; gap: var(--space-4); }
+    .panel {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+    .panel-header {
+      padding: var(--space-5) var(--space-4) var(--space-4);
+      border-bottom: 1px solid var(--color-border);
+    }
+    .panel-header h2 { margin: 0; font-size: 1rem; letter-spacing: .01em; }
+    .panel-header p { margin: 5px 0 0; color: var(--color-muted); font-size: .82rem; }
+    .panel-body { padding: var(--space-4); }
+
+    .power-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: var(--space-4);
+      padding: var(--space-5) var(--space-4);
+      background: var(--color-surface-raised);
+    }
+    .power-copy strong { display: block; font-size: 1.2rem; letter-spacing: -.02em; }
+    .power-copy span { color: var(--color-muted); font-size: .84rem; }
+    .switch {
+      position: relative;
+      width: 58px;
+      height: 48px;
+      display: inline-flex;
+      align-items: center;
+      cursor: pointer;
+    }
+    .switch input { position: absolute; opacity: 0; pointer-events: none; }
+    .switch-track {
+      width: 58px;
+      height: 32px;
+      border-radius: 999px;
+      background: #3a3638;
+      border: 1px solid #514b4e;
+      transition: background 180ms ease-out, border-color 180ms ease-out;
+    }
+    .switch-track::after {
+      content: "";
+      display: block;
+      width: 24px;
+      height: 24px;
+      margin: 3px;
+      border-radius: 50%;
+      background: var(--color-text);
+      transform: translateX(0);
+      transition: transform 180ms ease-out;
+    }
+    .switch input:checked + .switch-track { background: var(--color-primary); border-color: var(--color-primary-strong); }
+    .switch input:checked + .switch-track::after { transform: translateX(26px); }
+
+    .section-label {
+      margin: 0 0 var(--space-3);
+      color: var(--color-muted);
+      font-size: .72rem;
+      font-weight: 700;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+    .profile-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+    .profile-button {
+      min-height: 72px;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: var(--space-3);
+      background: var(--color-surface-raised);
+      color: var(--color-text);
+      text-align: left;
+      transition: transform 160ms ease-out, border-color 160ms ease-out, background 160ms ease-out;
+    }
+    .profile-button:active { transform: scale(.98); }
+    .profile-button strong { display: block; font-size: .87rem; }
+    .profile-button span { display: block; margin-top: 3px; color: var(--color-muted); font-size: .72rem; line-height: 1.3; }
+    .profile-button.selected {
+      border-color: var(--color-primary-strong);
+      background: #281716;
+      box-shadow: inset 3px 0 0 var(--color-primary);
+    }
+
+    .field { margin-top: var(--space-5); }
+    .field-label { display: flex; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-3); }
+    .field-label strong { font-size: .88rem; }
+    .field-label output { color: var(--color-accent); font-variant-numeric: tabular-nums; font-weight: 700; }
+    input[type="range"] { width: 100%; min-height: 48px; accent-color: var(--color-primary); }
+    .hint { margin: var(--space-2) 0 0; color: var(--color-muted); font-size: .76rem; }
+
+    details { margin-top: var(--space-5); border-top: 1px solid var(--color-border); padding-top: var(--space-4); }
+    summary { min-height: 48px; display: flex; align-items: center; cursor: pointer; font-weight: 650; }
+    .matrix-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-2); margin: var(--space-3) 0; }
+    .matrix-grid input, input[type="time"] {
+      width: 100%;
+      min-height: 48px;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm);
+      background: var(--color-bg);
+      color: var(--color-text);
+      padding: 9px 7px;
+      font-variant-numeric: tabular-nums;
+      text-align: center;
+    }
+
+    .setting-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: var(--space-4);
+      min-height: 72px;
+      padding: var(--space-3) 0;
+      border-bottom: 1px solid var(--color-border);
+    }
+    .setting-row:first-child { padding-top: 0; }
+    .setting-row:last-child { border-bottom: 0; padding-bottom: 0; }
+    .setting-row strong { display: block; font-size: .9rem; }
+    .setting-row small { display: block; margin-top: 3px; color: var(--color-muted); font-size: .75rem; }
+    .time-editor { padding: var(--space-4) 0; border-bottom: 1px solid var(--color-border); }
+    .time-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+    .time-grid label { color: var(--color-muted); font-size: .76rem; }
+    .time-grid input { display: block; margin-top: 6px; }
+
+    .button-row { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
+    .button {
+      min-height: 48px;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm);
+      padding: 10px 16px;
+      background: var(--color-surface-raised);
+      color: var(--color-text);
+      font-weight: 700;
+      transition: transform 150ms ease-out, opacity 150ms ease-out, border-color 150ms ease-out;
+    }
+    .button:active { transform: scale(.97); }
+    .button-primary { background: var(--color-primary); border-color: var(--color-primary-strong); color: #160807; }
+    .button-danger { color: var(--color-error); border-color: rgba(255, 138, 128, .38); }
+    .button-quiet { background: transparent; }
+    .diagnostic-output {
+      max-height: 300px;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      background: var(--color-bg);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm);
+      padding: var(--space-3);
+      color: var(--color-muted);
+      font: .75rem/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    .diagnostic-output:empty { display: none; }
+
     .toast {
       position: fixed;
-      bottom: 20px;
       left: 50%;
-      transform: translateX(-50%) translateY(14px);
-      background: #2a2a3a;
-      color: #fff;
-      padding: 10px 22px;
-      border-radius: 22px;
-      font-size: 0.83rem;
+      bottom: calc(var(--space-5) + env(safe-area-inset-bottom));
+      z-index: 1000;
+      transform: translate(-50%, 16px);
       opacity: 0;
-      transition: opacity .25s, transform .25s;
       pointer-events: none;
-      z-index: 999;
-      border: 1px solid var(--border);
-      white-space: nowrap;
-      box-shadow: 0 4px 20px rgba(0,0,0,.55);
+      max-width: calc(100vw - 32px);
+      padding: 11px 16px;
+      border: 1px solid var(--color-border);
+      border-radius: 999px;
+      background: var(--color-surface-raised);
+      box-shadow: var(--shadow-raised);
+      transition: transform 200ms ease-out, opacity 200ms ease-out;
+      text-align: center;
+      font-size: .82rem;
     }
-    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.show { transform: translate(-50%, 0); opacity: 1; }
+    .toast.error { color: var(--color-error); border-color: rgba(255, 138, 128, .45); }
+
+    @media (min-width: 768px) {
+      main { padding: var(--space-6) var(--space-5); }
+      .dashboard { grid-template-columns: minmax(0, 1.2fr) minmax(300px, .8fr); align-items: start; }
+      .filter-panel { grid-row: span 2; }
+      .profile-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    }
   </style>
 </head>
 <body>
-
-<header>
-  <span class="moon-icon">🌙</span>
-  <div>
-    <h1>Blue Light Filter</h1>
-    <p>System-wide blue light filter</p>
-  </div>
-  <div id="status-badge" class="status-badge off">Off</div>
-</header>
-
-<main>
-
-  <!-- On/Off toggle -->
-  <div class="toggle-card" id="toggle-card">
-    <div class="toggle-label">
-      <h2>Blue Light Filter</h2>
-    </div>
-    <label class="switch">
-      <input type="checkbox" id="main-switch" onchange="onToggle(this.checked)">
-      <span class="slider"></span>
-    </label>
-  </div>
-
-  <!-- Custom Color -->
-  <div class="card">
-    <div class="card-title">Custom Color</div>
-
-    <div class="slider-row">
-      <label>🔴 Red   <span id="val-r">1.00</span></label>
-      <!--
-        Red minimum = 10 (= 0.10).
-        Values below 0.10 cause a completely black screen.
-        Enforced in HTML (min attr) and JS (Math.max clamp).
-      -->
-      <input type="range" id="sl-r" min="10" max="100" value="100" oninput="onSliderInput()">
-    </div>
-    <div class="slider-row">
-      <label>🟢 Green <span id="val-g">1.00</span></label>
-      <input type="range" id="sl-g" min="0"  max="100" value="100" oninput="onSliderInput()">
-    </div>
-    <div class="slider-row">
-      <label>🔵 Blue  <span id="val-b">1.00</span></label>
-      <input type="range" id="sl-b" min="0"  max="100" value="100" oninput="onSliderInput()">
-    </div>
-
-    <button class="btn btn-primary" style="margin-top:16px;" onclick="applyAndSave()">
-      ✅ Apply &amp; Save
-    </button>
-  </div>
-
-  <!-- Automation -->
-  <div class="card">
-    <div class="card-title">Automation</div>
-
-    <!-- Schedule toggle -->
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
-      <div>
-        <div style="font-size:0.9rem;font-weight:600;">Sunset / Sunrise Schedule</div>
-        <div style="font-size:0.72rem;color:var(--text2);margin-top:2px;">Auto-enable at sunset, disable at sunrise</div>
+  <a class="skip-link" href="#main-content">Skip to controls</a>
+  <header class="app-header">
+    <div class="header-inner">
+      <svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true">
+        <path fill="currentColor" d="M27.8 4.8A19.5 19.5 0 1 0 43.2 33 17 17 0 0 1 27.8 4.8Z"/>
+        <path fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" d="M11 34c7-4 15-4 24 0" opacity=".55"/>
+      </svg>
+      <div class="brand">
+        <h1>BlueLightFIlter</h1>
+        <p>Compositor-level night display</p>
       </div>
-      <label class="switch">
-        <input type="checkbox" id="sched-switch" onchange="toggleSchedule(this.checked)">
-        <span class="slider"></span>
-      </label>
+      <div id="status-pill" class="status-pill" role="status">Loading</div>
+    </div>
+  </header>
+
+  <main id="main-content">
+    <div id="loading-state" class="runtime-state" role="status">
+      <span class="skeleton-dot" aria-hidden="true"></span>
+      Reading filter state…
+    </div>
+    <div id="error-state" class="runtime-state error-state" role="alert" hidden>
+      <span id="error-message">Controls could not connect to the root shell.</span>
+      <button id="retry-button" class="button button-quiet retry-button" type="button">Retry</button>
     </div>
 
-    <!-- Time inputs (visible when schedule enabled) -->
-    <div id="sched-times" style="display:none;">
-      <div style="display:flex;gap:12px;margin-bottom:14px;">
-        <div style="flex:1;">
-          <label style="font-size:0.78rem;color:var(--text2);display:block;margin-bottom:4px;">Sunset (filter ON)</label>
-          <input type="time" id="sched-sunset" value="21:00"
-                 style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);
-                        background:var(--bg3);color:var(--text);font-size:0.95rem;">
+    <div id="dashboard" class="dashboard" hidden>
+      <section class="panel filter-panel" aria-labelledby="filter-heading">
+        <div class="power-row">
+          <div class="power-copy">
+            <strong id="power-label">Filter off</strong>
+            <span id="power-detail">Identity matrix active</span>
+          </div>
+          <label class="switch" aria-label="Enable BlueLightFIlter">
+            <input id="power-switch" type="checkbox">
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
         </div>
-        <div style="flex:1;">
-          <label style="font-size:0.78rem;color:var(--text2);display:block;margin-bottom:4px;">Sunrise (filter OFF)</label>
-          <input type="time" id="sched-sunrise" value="06:00"
-                 style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);
-                        background:var(--bg3);color:var(--text);font-size:0.95rem;">
+        <div class="panel-header">
+          <h2 id="filter-heading">Night profile</h2>
+          <p>Choose the color transform. Selection stays in sync with shell automation.</p>
         </div>
-      </div>
-      <button class="btn btn-primary" onclick="saveSchedule()">Save Schedule</button>
+        <div class="panel-body">
+          <p class="section-label">Profiles</p>
+          <div class="profile-grid" id="profile-grid">
+            <button class="profile-button" type="button" data-profile="warm"><strong>Warm</strong><span>Gentle evening tint</span></button>
+            <button class="profile-button" type="button" data-profile="amber"><strong>Amber</strong><span>Low blue output</span></button>
+            <button class="profile-button" type="button" data-profile="deep-red"><strong>Deep red</strong><span>Red-dominant RGB</span></button>
+            <button class="profile-button" type="button" data-profile="red"><strong>Red mono</strong><span>Luminance preserved</span></button>
+            <button class="profile-button" type="button" data-profile="red-dim"><strong>Red dim</strong><span>Recommended at night</span></button>
+            <button class="profile-button" type="button" data-profile="red-extra-dim"><strong>Red extra dim</strong><span>Lowest built-in output</span></button>
+            <button class="profile-button" type="button" data-profile="custom"><strong>Custom</strong><span>Validated 4×4 matrix</span></button>
+          </div>
+
+          <div class="field">
+            <label class="field-label" for="brightness">
+              <strong>Compositor brightness</strong>
+              <output id="brightness-value" for="brightness">0.55</output>
+            </label>
+            <input id="brightness" type="range" min="10" max="100" step="1" value="55">
+            <p class="hint">Scales profile color coefficients without changing system brightness.</p>
+          </div>
+
+          <details id="custom-panel">
+            <summary>Custom 4×4 matrix</summary>
+            <p class="hint">Column-major order. Unsafe, negative, translated, or nearly black matrices are rejected.</p>
+            <div id="matrix-grid" class="matrix-grid" aria-label="Custom matrix values"></div>
+            <div class="button-row">
+              <button id="load-matrix" class="button button-quiet" type="button">Load saved</button>
+              <button id="save-matrix" class="button button-primary" type="button">Validate and apply</button>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="automation-heading">
+        <div class="panel-header">
+          <h2 id="automation-heading">Automation</h2>
+          <p>Optional features start a worker only when needed.</p>
+        </div>
+        <div class="panel-body">
+          <div class="setting-row">
+            <div><strong>Auto-start on boot</strong><small>Restore the saved profile after reboot</small></div>
+            <label class="switch" aria-label="Auto-start on boot">
+              <input id="autoboot-switch" type="checkbox"><span class="switch-track" aria-hidden="true"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div><strong>Night schedule</strong><small>Uses local device time and manual overrides</small></div>
+            <label class="switch" aria-label="Enable night schedule">
+              <input id="schedule-switch" type="checkbox"><span class="switch-track" aria-hidden="true"></span>
+            </label>
+          </div>
+          <div id="time-editor" class="time-editor" hidden>
+            <div class="time-grid">
+              <label for="sunset-time">Start<input id="sunset-time" type="time" value="21:00"></label>
+              <label for="sunrise-time">End<input id="sunrise-time" type="time" value="06:00"></label>
+            </div>
+            <div class="button-row"><button id="save-schedule" class="button button-primary" type="button">Save schedule</button></div>
+          </div>
+          <div class="setting-row">
+            <div><strong>Persistent notification</strong><small>Shows active profile while enabled</small></div>
+            <label class="switch" aria-label="Persistent notification">
+              <input id="notification-switch" type="checkbox"><span class="switch-track" aria-hidden="true"></span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="recovery-heading">
+        <div class="panel-header">
+          <h2 id="recovery-heading">Recovery and diagnostics</h2>
+          <p>Reset always restores identity without reading configuration.</p>
+        </div>
+        <div class="panel-body">
+          <div class="button-row">
+            <button id="run-diagnostics" class="button" type="button">Run diagnostics</button>
+            <button id="reset-filter" class="button button-danger" type="button">Emergency reset</button>
+          </div>
+          <pre id="diagnostic-output" class="diagnostic-output" tabindex="0" aria-label="Diagnostic output"></pre>
+        </div>
+      </section>
     </div>
+  </main>
 
-    <!-- Notification toggle -->
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;
-                padding-top:14px;border-top:1px solid var(--border);">
-      <div>
-        <div style="font-size:0.9rem;font-weight:600;">Persistent Notification</div>
-        <div style="font-size:0.72rem;color:var(--text2);margin-top:2px;">Show filter status in notification tray</div>
-      </div>
-      <label class="switch">
-        <input type="checkbox" id="notif-switch" onchange="toggleNotification(this.checked)">
-        <span class="slider"></span>
-      </label>
-    </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-    <!-- Daemon status indicator -->
-    <div id="daemon-warn" style="display:none;margin-top:14px;padding:10px 12px;
-                border-radius:8px;background:#2a2000;border:1px solid #554400;
-                font-size:0.78rem;color:#ffcc44;">
-      Daemon is not running. Schedule and notification require a reboot or tap below to start it.
-      <button class="btn btn-warning" style="margin-top:8px;padding:8px 12px;font-size:0.78rem;"
-              onclick="startDaemon()">Start Daemon</button>
-    </div>
-  </div>
+  <script>
+    'use strict';
 
-  <!-- Info -->
-  <div class="card">
-    <div class="card-title">Info</div>
-    <div class="info-row">
-      <span class="lbl">Filter state</span>
-      <span class="val" id="info-state">—</span>
-    </div>
-    <div class="info-row">
-      <span class="lbl">Color (R / G / B)</span>
-      <span class="val" id="info-color">—</span>
-    </div>
-    <div class="info-row">
-      <span class="lbl">Auto-start on boot</span>
-      <span class="val" id="info-boot">—</span>
-    </div>
-    <div class="info-row">
-      <span class="lbl">Daemon</span>
-      <span class="val" id="info-daemon">—</span>
-    </div>
-    <div class="info-row">
-      <span class="lbl">Schedule</span>
-      <span class="val" id="info-schedule">—</span>
-    </div>
-  </div>
+    const CLI = '/system/bin/bluefilter';
+    const COMMAND_STATUS = '/system/bin/bluefilter status --json';
+    const COMMAND_MATRIX_GET = '/system/bin/bluefilter matrix get';
+    const COMMAND_MATRIX_SET = '/system/bin/bluefilter matrix set';
+    const COMMAND_AUTOBOOT = '/system/bin/bluefilter autoboot';
+    const COMMAND_SCHEDULE = '/system/bin/bluefilter schedule';
+    const COMMAND_NOTIFICATION = '/system/bin/bluefilter notification';
+    const COMMAND_RESET = '/system/bin/bluefilter reset';
+    const PROFILE_NAMES = new Set(['warm', 'amber', 'deep-red', 'red', 'red-dim', 'red-extra-dim', 'custom']);
+    const DECIMAL = /^(?:\d+(?:\.\d+)?|\.\d+)$/;
+    const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+    const IDENTITY = ['1','0','0','0','0','1','0','0','0','0','1','0','0','0','0','1'];
+    let currentState = null;
+    let toastTimer = 0;
+    let callbackId = 0;
 
-  <!-- Quick Actions -->
-  <div class="card">
-    <div class="card-title">Quick Actions</div>
-    <button class="btn btn-warning" id="btn-boot" onclick="toggleBoot()">
-      ⚙ Auto-start on boot: —
-    </button>
-    <button class="btn btn-danger" onclick="removeFilterNow()">
-      ✖ Remove filter now
-    </button>
-  </div>
+    function shell(command) {
+      return new Promise((resolve) => {
+        if (!window.ksu || typeof window.ksu.exec !== 'function') {
+          resolve({ ok: false, code: 127, stdout: '', stderr: 'WebUI root bridge is unavailable.' });
+          return;
+        }
+        const callback = `__bluefilter_${Date.now()}_${callbackId++}`;
+        const timer = window.setTimeout(() => {
+          delete window[callback];
+          resolve({ ok: false, code: 124, stdout: '', stderr: 'Root command timed out.' });
+        }, 15000);
+        window[callback] = (errno, stdout, stderr) => {
+          window.clearTimeout(timer);
+          delete window[callback];
+          const parsed = Number(errno);
+          const code = Number.isFinite(parsed) ? parsed : 0;
+          resolve({
+            ok: code === 0,
+            code,
+            stdout: String(stdout || '').trim(),
+            stderr: String(stderr || '').trim()
+          });
+        };
+        try {
+          window.ksu.exec(command, '{}', callback);
+        } catch (error) {
+          window.clearTimeout(timer);
+          delete window[callback];
+          resolve({ ok: false, code: 127, stdout: '', stderr: error.message || 'Root command failed.' });
+        }
+      });
+    }
 
-</main>
+    function showToast(message, isError = false) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.className = `toast show${isError ? ' error' : ''}`;
+      window.clearTimeout(toastTimer);
+      toastTimer = window.setTimeout(() => { toast.className = 'toast'; }, 3200);
+      try { window.ksu.toast(message); } catch (_) {}
+    }
 
-<div class="toast" id="toast"></div>
+    function setBusy(busy) {
+      document.getElementById('dashboard').setAttribute('aria-busy', String(busy));
+      document.querySelectorAll('#dashboard button, #dashboard input').forEach((control) => {
+        control.disabled = busy;
+      });
+    }
 
-<script>
-// =============================================================
-// Shell bridge — KSU WebUI
-// ksu.exec is async but callback-based; we wrap it in a Promise.
-// =============================================================
-let _cbId = 0;
-function sh(cmd) {
-  return new Promise(resolve => {
-    const cb = `_bf${Date.now()}_${_cbId++}`;
-    window[cb] = (_, stdout) => {
-      delete window[cb];
-      resolve((stdout || '').trim());
-    };
-    try { ksu.exec(cmd, '{}', cb); }
-    catch (_) { delete window[cb]; resolve(''); }
-  });
-}
+    function setRuntimeState(kind, message = '') {
+      const loading = document.getElementById('loading-state');
+      const error = document.getElementById('error-state');
+      const dashboard = document.getElementById('dashboard');
+      loading.hidden = kind !== 'loading';
+      error.hidden = kind !== 'error';
+      dashboard.hidden = kind !== 'ready';
+      if (message) document.getElementById('error-message').textContent = message;
+    }
 
-function toast(msg) {
-  try { ksu.toast(msg); } catch (_) {}
-  const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.classList.add('show');
-  clearTimeout(el._t);
-  el._t = setTimeout(() => el.classList.remove('show'), 2600);
-}
+    function parseStatus(stdout) {
+      const line = stdout.split(/\r?\n/).reverse().find((item) => item.trim().startsWith('{'));
+      if (!line) throw new Error('Status command returned no JSON.');
+      const status = JSON.parse(line);
+      if (typeof status.enabled !== 'boolean' || !PROFILE_NAMES.has(status.profile)) {
+        throw new Error('Status data is malformed.');
+      }
+      return status;
+    }
 
-// =============================================================
-// Paths
-// =============================================================
-const MODDIR = '/data/adb/modules/bluelightfilter';
-const CONFIG = `${MODDIR}/config.conf`;
-const STATE  = `${MODDIR}/enabled`;   // presence = filter is on
-const BOOT   = `${MODDIR}/autoboot`;  // presence = auto-start on boot
+    async function refresh() {
+      setRuntimeState('loading');
+      const [statusResult, scheduleResult, notificationResult] = await Promise.all([
+        shell(COMMAND_STATUS),
+        shell(`${COMMAND_SCHEDULE} status`),
+        shell(`${COMMAND_NOTIFICATION} status`)
+      ]);
+      if (!statusResult.ok) {
+        setRuntimeState('error', statusResult.stderr || 'Could not read BlueLightFIlter state. Run diagnostics from a root shell.');
+        return;
+      }
+      try {
+        currentState = parseStatus(statusResult.stdout);
+        const scheduleParts = scheduleResult.ok ? scheduleResult.stdout.split(/\s+/) : [];
+        render(currentState, scheduleParts, notificationResult.stdout === 'on');
+        setRuntimeState('ready');
+      } catch (error) {
+        setRuntimeState('error', error.message);
+      }
+    }
 
-// =============================================================
-// SurfaceFlinger helpers
-// =============================================================
-const sfApply = (r, g, b) =>
-  `service call SurfaceFlinger 1015 i32 1 ` +
-  `f ${r} f 0 f 0 f 0 ` +
-  `f 0 f ${g} f 0 f 0 ` +
-  `f 0 f 0 f ${b} f 0 ` +
-  `f 0 f 0 f 0 f 1`;
+    function render(state, scheduleParts, notificationEnabled) {
+      const pill = document.getElementById('status-pill');
+      pill.textContent = state.enabled ? 'Active' : 'Off';
+      pill.className = `status-pill${state.enabled ? ' on' : ''}`;
+      document.getElementById('power-switch').checked = state.enabled;
+      document.getElementById('power-label').textContent = state.enabled ? 'Filter active' : 'Filter off';
+      document.getElementById('power-detail').textContent = state.enabled
+        ? `${state.profile} · ${Number(state.brightness).toFixed(2)}`
+        : `Saved profile: ${state.profile}`;
+      document.querySelectorAll('[data-profile]').forEach((button) => {
+        const selected = button.dataset.profile === state.profile;
+        button.classList.toggle('selected', selected);
+        button.setAttribute('aria-pressed', String(selected));
+      });
+      const brightness = Math.round(Number(state.brightness) * 100);
+      document.getElementById('brightness').value = String(brightness);
+      document.getElementById('brightness-value').value = Number(state.brightness).toFixed(2);
+      document.getElementById('autoboot-switch').checked = Boolean(state.autoboot);
+      document.getElementById('schedule-switch').checked = Boolean(state.scheduled);
+      document.getElementById('notification-switch').checked = notificationEnabled;
+      document.getElementById('time-editor').hidden = !state.scheduled;
+      if (scheduleParts.length >= 3) {
+        if (TIME.test(scheduleParts[1])) document.getElementById('sunset-time').value = scheduleParts[1];
+        if (TIME.test(scheduleParts[2])) document.getElementById('sunrise-time').value = scheduleParts[2];
+      }
+    }
 
-const SF_IDENTITY = sfApply('1', '1', '1');
+    async function mutate(command, successMessage) {
+      setBusy(true);
+      const result = await shell(command);
+      if (!result.ok) {
+        showToast(result.stderr || result.stdout || `Command failed (${result.code}).`, true);
+        setBusy(false);
+        await refresh();
+        return false;
+      }
+      showToast(successMessage);
+      setBusy(false);
+      await refresh();
+      return true;
+    }
 
-// =============================================================
-// Slider — debounced input handler
-//
-// Problem: oninput fires many times per second during a fast drag.
-// Each event previously could trigger a full applyAndSave() with
-// multiple sh() calls, stacking up pending Promises and causing
-// the UI thread to stutter / the slider thumb to jump.
-//
-// Solution:
-//   1. Label update  → synchronous, instant (no shell calls).
-//   2. Live preview  → throttled at most once per 80 ms via
-//      requestAnimationFrame. Uses a single sfApply shell call only
-//      when the filter is currently active, so the user can see the
-//      color change in real time while dragging.
-//   3. Apply & Save  → only on explicit button press (no auto-save
-//      during drag), keeping writes to a minimum.
-// =============================================================
+    function createMatrixInputs() {
+      const grid = document.getElementById('matrix-grid');
+      IDENTITY.forEach((value, index) => {
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.inputMode = 'decimal';
+        input.min = '0';
+        input.max = '1.25';
+        input.step = '0.0001';
+        input.value = value;
+        input.dataset.matrixIndex = String(index);
+        input.setAttribute('aria-label', `Matrix value ${index + 1}`);
+        grid.appendChild(input);
+      });
+    }
 
-// Track whether a rAF preview is already queued
-let _rafPending = false;
+    async function loadMatrix() {
+      setBusy(true);
+      const result = await shell(COMMAND_MATRIX_GET);
+      setBusy(false);
+      if (!result.ok) { showToast(result.stderr || 'Could not load custom matrix.', true); return; }
+      const values = result.stdout.split(/\s+/);
+      if (values.length !== 16 || values.some((value) => !DECIMAL.test(value))) {
+        showToast('Saved custom matrix is malformed.', true);
+        return;
+      }
+      document.querySelectorAll('[data-matrix-index]').forEach((input, index) => { input.value = values[index]; });
+      showToast('Custom matrix loaded');
+    }
 
-function onSliderInput() {
-  // 1. Update labels synchronously — zero latency, no shell calls.
-  const r = +document.getElementById('sl-r').value;
-  const g = +document.getElementById('sl-g').value;
-  const b = +document.getElementById('sl-b').value;
-  document.getElementById('val-r').textContent = (r / 100).toFixed(2);
-  document.getElementById('val-g').textContent = (g / 100).toFixed(2);
-  document.getElementById('val-b').textContent = (b / 100).toFixed(2);
+    async function saveMatrix() {
+      const values = [...document.querySelectorAll('[data-matrix-index]')].map((input) => input.value.trim());
+      if (values.length !== 16 || values.some((value) => !DECIMAL.test(value) || Number(value) > 1.25)) {
+        showToast('Enter 16 numbers from 0 to 1.25.', true);
+        return;
+      }
+      await mutate(`${COMMAND_MATRIX_SET} ${values.join(' ')}`, 'Custom matrix applied');
+    }
 
-  // 2. Live SurfaceFlinger preview: throttled to one shell call per
-  //    animation frame (~60 fps max). We only do this if the filter
-  //    is currently enabled so there is something visible to preview.
-  if (!_rafPending) {
-    _rafPending = true;
-    requestAnimationFrame(() => {
-      _rafPending = false;
-      if (document.getElementById('main-switch').checked) {
-        const rv = Math.max(10, +document.getElementById('sl-r').value);
-        const gv = +document.getElementById('sl-g').value;
-        const bv = +document.getElementById('sl-b').value;
-        // Fire-and-forget: we don't await this — if a previous call is
-        // still running, this one queues behind it at the shell level.
-        // Because ksu.exec is serialised per-process, rapid calls do
-        // not stack up endlessly — the last value always wins.
-        sh(sfApply(
-          (rv / 100).toFixed(2),
-          (gv / 100).toFixed(2),
-          (bv / 100).toFixed(2)
-        ));
+    document.getElementById('power-switch').addEventListener('change', (event) => {
+      mutate(`${CLI} ${event.target.checked ? 'on' : 'off'}`, event.target.checked ? 'Filter enabled' : 'Filter disabled');
+    });
+    document.getElementById('profile-grid').addEventListener('click', (event) => {
+      const button = event.target.closest('[data-profile]');
+      if (!button || !PROFILE_NAMES.has(button.dataset.profile)) return;
+      mutate(`${CLI} profile set ${button.dataset.profile}`, `Profile set to ${button.dataset.profile}`);
+      if (button.dataset.profile === 'custom') document.getElementById('custom-panel').open = true;
+    });
+    document.getElementById('brightness').addEventListener('input', (event) => {
+      document.getElementById('brightness-value').value = (Number(event.target.value) / 100).toFixed(2);
+    });
+    document.getElementById('brightness').addEventListener('change', (event) => {
+      const value = (Number(event.target.value) / 100).toFixed(2);
+      mutate(`${CLI} brightness ${value}`, `Brightness set to ${value}`);
+    });
+    document.getElementById('autoboot-switch').addEventListener('change', (event) => {
+      mutate(`${COMMAND_AUTOBOOT} ${event.target.checked ? 'on' : 'off'}`, `Auto-start ${event.target.checked ? 'enabled' : 'disabled'}`);
+    });
+    document.getElementById('schedule-switch').addEventListener('change', (event) => {
+      mutate(`${COMMAND_SCHEDULE} ${event.target.checked ? 'on' : 'off'}`, `Schedule ${event.target.checked ? 'enabled' : 'disabled'}`);
+    });
+    document.getElementById('notification-switch').addEventListener('change', (event) => {
+      mutate(`${COMMAND_NOTIFICATION} ${event.target.checked ? 'on' : 'off'}`, `Notification ${event.target.checked ? 'enabled' : 'disabled'}`);
+    });
+    document.getElementById('save-schedule').addEventListener('click', () => {
+      const start = document.getElementById('sunset-time').value;
+      const end = document.getElementById('sunrise-time').value;
+      if (!TIME.test(start) || !TIME.test(end) || start === end) {
+        showToast('Choose two different valid times.', true);
+        return;
+      }
+      mutate(`${COMMAND_SCHEDULE} set ${start} ${end}`, `Schedule saved: ${start}–${end}`);
+    });
+    document.getElementById('load-matrix').addEventListener('click', loadMatrix);
+    document.getElementById('save-matrix').addEventListener('click', saveMatrix);
+    document.getElementById('run-diagnostics').addEventListener('click', async () => {
+      setBusy(true);
+      const result = await shell(`${CLI} diag`);
+      setBusy(false);
+      document.getElementById('diagnostic-output').textContent = result.stdout || result.stderr || 'No diagnostic output.';
+      showToast(result.ok ? 'Diagnostics complete' : 'Diagnostics reported an error', !result.ok);
+    });
+    document.getElementById('reset-filter').addEventListener('click', () => {
+      if (window.confirm('Restore the identity matrix and clear active filter state?')) {
+        mutate(COMMAND_RESET, 'Identity matrix restored');
       }
     });
-  }
-}
+    document.getElementById('retry-button').addEventListener('click', refresh);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
 
-// =============================================================
-// Apply & Save
-// Persists the current slider values to config.conf and marks
-// the filter as enabled. Called only from the button.
-// =============================================================
-async function applyAndSave() {
-  // Clamp Red — also enforced by HTML min="10", but guard here too.
-  const rawR = Math.max(10, +document.getElementById('sl-r').value);
-  const r = (rawR / 100).toFixed(2);
-  const g = (document.getElementById('sl-g').value / 100).toFixed(2);
-  const b = (document.getElementById('sl-b').value / 100).toFixed(2);
-  const rgb = `${r} ${g} ${b}`;
-
-  // Apply to screen
-  await sh(sfApply(r, g, b));
-
-  // Persist: update existing "custom=" line, or insert after [profiles]
-  const count = await sh(`grep -c '^custom=' ${CONFIG} 2>/dev/null || echo 0`);
-  if (parseInt(count, 10) > 0) {
-    await sh(`sed -i "s|^custom=.*|custom=${rgb}|" ${CONFIG}`);
-  } else {
-    await sh(`sed -i "/^\\[profiles\\]/a custom=${rgb}" ${CONFIG}`);
-  }
-  await sh(`sed -i 's|^profile=.*|profile=custom|' ${CONFIG}`);
-
-  // Mark filter as enabled
-  await sh(`touch ${STATE}`);
-
-  // Update UI immediately — do not wait for syncInfo to re-read disk
-  applyUIState(true);
-  document.getElementById('info-color').textContent = `${r} / ${g} / ${b}`;
-
-  toast('Applied and saved');
-
-  // Refresh the full info panel in the background
-  syncInfo();
-}
-
-// =============================================================
-// Filter on/off toggle
-// =============================================================
-async function onToggle(on) {
-  // Lock the switch while the async work runs to prevent double-fire.
-  const sw = document.getElementById('main-switch');
-  sw.disabled = true;
-
-  if (on) {
-    const rgb = await readSavedRGB();
-    if (rgb) {
-      await sh(sfApply(rgb.r, rgb.g, rgb.b));
-    } else {
-      // No saved color yet — apply identity (screen looks unchanged).
-      await sh(SF_IDENTITY);
-    }
-    await sh(`touch ${STATE}`);
-    toast('Filter enabled');
-  } else {
-    await sh(SF_IDENTITY);
-    await sh(`rm -f ${STATE}`);
-    toast('Filter disabled');
-  }
-
-  sw.disabled = false;
-  await syncInfo();
-}
-
-// =============================================================
-// Auto-boot toggle
-// =============================================================
-async function toggleBoot() {
-  const isOn = await sh(`[ -f ${BOOT} ] && echo 1 || echo 0`);
-  if (isOn === '1') {
-    await sh(`rm -f ${BOOT}`);
-    toast('Auto-start: OFF');
-  } else {
-    await sh(`touch ${BOOT}`);
-    toast('Auto-start: ON');
-  }
-  await syncInfo();
-}
-
-// =============================================================
-// Remove filter from screen without changing the saved state.
-// The filter will come back next time the user presses "Apply & Save"
-// or re-enables the toggle.
-// =============================================================
-async function removeFilterNow() {
-  await sh(SF_IDENTITY);
-  toast('Filter removed from screen');
-}
-
-// =============================================================
-// Read saved custom RGB from config.conf
-// Returns { r, g, b } as strings, or null if not set.
-// =============================================================
-async function readSavedRGB() {
-  const line = await sh(
-    `awk '/^\\[profiles\\]/{f=1;next}/^\\[/{f=0}` +
-    `f&&/^custom=/{sub(/^custom=/,"");print;exit}' ${CONFIG} 2>/dev/null`
-  );
-  if (!line) return null;
-  const parts = line.trim().split(/\s+/);
-  return parts.length >= 3 ? { r: parts[0], g: parts[1], b: parts[2] } : null;
-}
-
-// =============================================================
-// Apply badge + toggle-card state (pure DOM, no shell calls)
-// =============================================================
-function applyUIState(isOn) {
-  const badge = document.getElementById('status-badge');
-  badge.textContent = isOn ? 'On' : 'Off';
-  badge.className   = `status-badge ${isOn ? 'on' : 'off'}`;
-  document.getElementById('main-switch').checked = isOn;
-  document.getElementById('toggle-card').classList.toggle('active', isOn);
-}
-
-// =============================================================
-// Sync full info panel from disk.
-// Called on init and every 9 seconds. DOES NOT rewrite the sliders
-// while the user might be dragging them — it only syncs them when
-// the page first loads (slidersTouched === false).
-// =============================================================
-let _slidersTouched = false;  // true once user has moved a slider
-
-async function syncInfo() {
-  const [filterOn, bootOn] = await Promise.all([
-    sh(`[ -f ${STATE} ] && echo 1 || echo 0`),
-    sh(`[ -f ${BOOT}  ] && echo 1 || echo 0`),
-  ]);
-  const isOn   = filterOn === '1';
-  const isBoot = bootOn   === '1';
-
-  applyUIState(isOn);
-  document.getElementById('info-state').textContent = isOn   ? 'Active'   : 'Inactive';
-  document.getElementById('info-boot').textContent  = isBoot ? 'Yes'      : 'No';
-  document.getElementById('btn-boot').textContent   =
-    `⚙ Auto-start on boot: ${isBoot ? 'ON' : 'OFF'}`;
-
-  // --- Automation state ---
-  const [schedEnabled, schedSunset, schedSunrise, notifEnabled, daemonStatus] =
-    await Promise.all([
-      sh(readConfigCmd('schedule', 'enabled')),
-      sh(readConfigCmd('schedule', 'sunset')),
-      sh(readConfigCmd('schedule', 'sunrise')),
-      sh(readConfigCmd('notification', 'enabled')),
-      sh('/system/bin/bluefilter daemon-status'),
-    ]);
-
-  const isSched = schedEnabled === '1';
-  const isNotif = notifEnabled === '1';
-  const isDaemonOn = daemonStatus.startsWith('running');
-
-  document.getElementById('sched-switch').checked = isSched;
-  document.getElementById('sched-times').style.display = isSched ? '' : 'none';
-  if (schedSunset)  document.getElementById('sched-sunset').value  = schedSunset;
-  if (schedSunrise) document.getElementById('sched-sunrise').value = schedSunrise;
-  document.getElementById('notif-switch').checked = isNotif;
-
-  document.getElementById('info-daemon').textContent   = isDaemonOn ? 'Running' : 'Stopped';
-  document.getElementById('info-schedule').textContent  =
-    isSched ? `ON (${schedSunset || '?'} – ${schedSunrise || '?'})` : 'OFF';
-
-  // Show daemon warning if schedule or notification is on but daemon is not running
-  document.getElementById('daemon-warn').style.display =
-    (isSched || isNotif) && !isDaemonOn ? '' : 'none';
-
-  const rgb = await readSavedRGB();
-  if (rgb) {
-    // Clamp Red defensively (e.g. if config was corrupted externally)
-    const rVal = Math.max(0.10, parseFloat(rgb.r));
-    const gVal = parseFloat(rgb.g);
-    const bVal = parseFloat(rgb.b);
-
-    // Only push values into sliders on the initial page load.
-    // After the user has touched a slider we leave them alone so
-    // the periodic syncInfo() poll doesn't yank the thumb mid-drag.
-    if (!_slidersTouched) {
-      document.getElementById('sl-r').value = Math.max(10, Math.round(rVal * 100));
-      document.getElementById('sl-g').value = Math.round(gVal * 100);
-      document.getElementById('sl-b').value = Math.round(bVal * 100);
-      // Re-render labels after setting values programmatically
-      document.getElementById('val-r').textContent = rVal.toFixed(2);
-      document.getElementById('val-g').textContent = gVal.toFixed(2);
-      document.getElementById('val-b').textContent = bVal.toFixed(2);
-    }
-
-    document.getElementById('info-color').textContent =
-      `${rVal.toFixed(2)} / ${gVal.toFixed(2)} / ${bVal.toFixed(2)}`;
-  } else {
-    document.getElementById('info-color').textContent = 'Not saved yet';
-  }
-}
-
-// =============================================================
-// Schedule — toggle, save, and config helpers
-// =============================================================
-
-// Section-aware config reader: returns value for key in [section]
-function readConfigCmd(section, key) {
-  return `awk '/^\\[${section}\\]/{s=1;next}/^\\[/{s=0}` +
-         `s&&/^${key}=/{split($0,a,"=");print a[2];exit}' ${CONFIG} 2>/dev/null`;
-}
-
-// Section-aware config writer: sets key=value within [section]
-function writeConfigCmd(section, key, value) {
-  return `awk '/^\\[${section}\\]/{s=1}/^\\[/{if(s&&!/^\\[${section}\\]/)s=0}` +
-         `s&&/^${key}=/{$0="${key}=${value}"}1' ${CONFIG} > ${CONFIG}.tmp ` +
-         `&& mv ${CONFIG}.tmp ${CONFIG}`;
-}
-
-async function toggleSchedule(on) {
-  await sh(writeConfigCmd('schedule', 'enabled', on ? '1' : '0'));
-  document.getElementById('sched-times').style.display = on ? '' : 'none';
-  toast(on ? 'Schedule enabled' : 'Schedule disabled');
-  if (on) await ensureDaemon();
-  syncInfo();
-}
-
-async function saveSchedule() {
-  const sunset  = document.getElementById('sched-sunset').value;   // "HH:MM"
-  const sunrise = document.getElementById('sched-sunrise').value;
-  if (!sunset || !sunrise) { toast('Please set both times'); return; }
-  await sh(writeConfigCmd('schedule', 'sunset', sunset));
-  await sh(writeConfigCmd('schedule', 'sunrise', sunrise));
-  toast('Schedule saved');
-  syncInfo();
-}
-
-async function toggleNotification(on) {
-  await sh(writeConfigCmd('notification', 'enabled', on ? '1' : '0'));
-  toast(on ? 'Notification enabled' : 'Notification disabled');
-  if (on) await ensureDaemon();
-  syncInfo();
-}
-
-async function ensureDaemon() {
-  const status = await sh('/system/bin/bluefilter daemon-status');
-  if (!status.startsWith('running')) {
-    await sh('/system/bin/bluefilter daemon-start');
-  }
-}
-
-async function startDaemon() {
-  await sh('/system/bin/bluefilter daemon-start');
-  toast('Daemon started');
-  syncInfo();
-}
-
-// =============================================================
-// Mark sliders as touched the first time the user interacts.
-// This prevents syncInfo() from overwriting mid-drag.
-// =============================================================
-['sl-r', 'sl-g', 'sl-b'].forEach(id => {
-  document.getElementById(id).addEventListener('pointerdown', () => {
-    _slidersTouched = true;
-  }, { once: false, passive: true });
-});
-
-// =============================================================
-// Init
-// =============================================================
-syncInfo();
-setInterval(syncInfo, 9000);
-</script>
+    createMatrixInputs();
+    refresh();
+  </script>
 </body>
 </html>

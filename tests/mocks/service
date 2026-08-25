@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+printf '%s\n' "$*" >> "${MOCK_SERVICE_LOG:?}"
+if [ -f "${MOCK_SERVICE_FAIL_FILE:-/nonexistent}" ]; then
+    printf 'mock SurfaceFlinger failure\n' >&2
+    exit 3
+fi
+case "${1:-} ${2:-}" in
+    'check SurfaceFlinger') printf 'Service SurfaceFlinger: found\n' ;;
+    'call SurfaceFlinger') printf 'Result: Parcel(NULL)\n' ;;
+    *) printf 'unsupported service call\n' >&2; exit 2 ;;
+esac
