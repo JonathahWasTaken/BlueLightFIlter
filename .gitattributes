@@ -1,0 +1,7 @@
+# Android and Magisk scripts must remain LF-only for BusyBox ash.
+*.sh text eol=lf
+system/bin/* text eol=lf
+META-INF/com/google/android/update-binary text eol=lf
+META-INF/com/google/android/updater-script text eol=lf
+*.conf text eol=lf
+module.prop text eol=lf

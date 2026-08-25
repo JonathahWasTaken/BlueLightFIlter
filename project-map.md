@@ -19,10 +19,12 @@ _Generated: 2026-08-25 | Git: 21fb482_
 `action.sh` — Module action launcher for KSUWebUIStandalone or MMRL.
 `module.prop` — Root-module identity, version, minimum API, and WebUI metadata.
 `META-INF/com/google/android/update-binary` — Flashable ZIP extraction and customization entrypoint.
+`.gitattributes` — Enforces LF storage for Android/Magisk runtime files and metadata.
 `README.md` — User documentation and current compatibility claims.
 
 ## Critical Constraints
 - Runtime scripts target Android `/system/bin/sh`; avoid Bash-only syntax and desktop-only utilities.
+- Shipped scripts, config, and module metadata must be LF-only; Magisk BusyBox `ash` treats CRLF control words as syntax errors.
 - `/system/bin/bluefilter` is a public automation API and must keep `start`, `stop`, `status`, `reset`, and `diag` compatibility.
 - SurfaceFlinger matrix operations must always retain a config-independent identity-matrix recovery path.
 - SurfaceFlinger transaction 1015 is a last-writer interface; Android and vendor color-transform composition cannot be recovered safely from a root shell.

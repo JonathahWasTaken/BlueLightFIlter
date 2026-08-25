@@ -43,10 +43,32 @@ test_schema_metadata_and_core_permissions_are_current() {
     customize=$(cat "$TEST_ROOT/customize.sh")
     assert_contains "$config" 'schema=2' || return 1
     assert_contains "$config" '[custom]' || return 1
-    assert_contains "$metadata" 'version=2.0.0' || return 1
-    assert_contains "$metadata" 'versionCode=20000' || return 1
+    assert_contains "$metadata" 'version=2.0.1' || return 1
+    assert_contains "$metadata" 'versionCode=20001' || return 1
     assert_contains "$customize" 'bluefilter-core' || return 1
     case "$customize" in *'SKIPUNZIP=1'*) return 1 ;; esac
+}
+
+test_shipped_runtime_files_use_lf_only() {
+    for relative_path in \
+        customize.sh \
+        service.sh \
+        action.sh \
+        META-INF/com/google/android/update-binary \
+        META-INF/com/google/android/updater-script \
+        system/bin/bluefilter \
+        system/bin/bluefilter-core \
+        system/bin/bluefilter-daemon \
+        config.conf \
+        module.prop
+    do
+        byte_count=$(wc -c < "$TEST_ROOT/$relative_path")
+        lf_byte_count=$(tr -d '\r' < "$TEST_ROOT/$relative_path" | wc -c)
+        if [ "$byte_count" -ne "$lf_byte_count" ]; then
+            printf '    CRLF bytes found in shipped file: %s\n' "$relative_path"
+            return 1
+        fi
+    done
 }
 
 test_diag_reports_required_environment_and_conflicts() {
@@ -101,6 +123,7 @@ test_diag_test_has_trap_based_restoration() {
 for test_name in \
     test_uses_official_magisk_installer_entrypoint \
     test_schema_metadata_and_core_permissions_are_current \
+    test_shipped_runtime_files_use_lf_only \
     test_diag_reports_required_environment_and_conflicts \
     test_diag_test_restores_active_matrix \
     test_diag_test_skips_when_inactive \

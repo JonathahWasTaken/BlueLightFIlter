@@ -7,7 +7,7 @@ CONFIG_DEST=$MODPATH/config.conf
 
 ui_print ""
 ui_print "============================================"
-ui_print "   BlueLightFIlter 2.0"
+ui_print "   BlueLightFIlter 2.0.1"
 ui_print "   SurfaceFlinger color transforms"
 ui_print "============================================"
 ui_print ""
